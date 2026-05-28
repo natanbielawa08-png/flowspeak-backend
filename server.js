@@ -9,9 +9,29 @@ app.get('/', (req, res) => {
 });
 
 app.post('/retell-webhook', (req, res) => {
-    console.log('Received webhook from Retell:');
-    console.log('Body:', req.body);
+    const { event, call } = req.body;
+    
+    console.log('=== Webhook Received ===');
+    console.log('Event:', event);
+    
+    // Respond immediately
     res.status(200).json({ received: true });
+    
+    // Process after responding
+    if (event === 'call_ended' && call) {
+        // Print the ENTIRE call_analysis object
+        console.log('=== Full call_analysis ===');
+        console.log(JSON.stringify(call.call_analysis, null, 2));
+        
+        // Try to extract custom data
+        const customData = call.call_analysis?.custom_analysis_data || {};
+        console.log('=== Custom Analysis Data ===');
+        console.log(JSON.stringify(customData, null, 2));
+        
+        // Also print the transcript to see what was said
+        console.log('=== Transcript ===');
+        console.log(call.transcript);
+    }
 });
 
 app.listen(PORT, () => {
