@@ -64,6 +64,10 @@ app.post('/retell-webhook', (req, res) => {
 
     // Process after responding
     if (event === 'call_ended' && call) {
+        // Log the full transcript
+        console.log('=== Full Transcript ===');
+        console.log(call.transcript);
+        
         // Extract lead info from transcript
         const leadInfo = extractLeadInfo(call.transcript);
         console.log('=== Extracted Lead Info ===');
