@@ -43,13 +43,17 @@ function extractLeadInfo(transcript) {
             lead.postcode = postcodeMatch[0].toUpperCase();
         }
         
-        // Extract phone number (handles spaces, dots, and dashes)
-        const phoneMatch = line.match(/0[0-9\s\.\-]{10,15}/);
+        // Extract phone number - accepts 11 or 12 digits (handles customer mistakes)
+        const phoneMatch = line.match(/0[0-9\s\.\-]{10,16}/);
         if (phoneMatch && !lead.phone) {
             // Remove spaces, dots, dashes and keep only digits
             let phoneNumber = phoneMatch[0].replace(/[\s\.\-]/g, '');
-            // Make sure it starts with 0 and has 11 digits
-            if (phoneNumber.match(/^0[0-9]{10}$/)) {
+            // Accept 11 or 12 digit numbers starting with 0
+            // If 12 digits, take the first 11 (remove the extra digit)
+            if (phoneNumber.match(/^0[0-9]{10,11}$/)) {
+                if (phoneNumber.length === 12) {
+                    phoneNumber = phoneNumber.substring(0, 11);
+                }
                 lead.phone = phoneNumber;
             }
         }
@@ -91,6 +95,8 @@ app.post('/retell-webhook', (req, res) => {
             .catch(err => console.error('Failed to send SMS:', err));
         } else {
             console.log('No phone number found or missing contractor number');
+            console.log('leadInfo.phone:', leadInfo.phone);
+            console.log('CONTRACTOR_PHONE_NUMBER:', CONTRACTOR_PHONE_NUMBER);
         }
     }
 });
