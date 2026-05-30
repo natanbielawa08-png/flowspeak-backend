@@ -16,45 +16,55 @@ app.get('/', (req, res) => {
     res.send('FlowSpeak backend is running!');
 });
 
-function findPhoneNumber(text) {
-    if (!text) return null;
-    const digits = text.replace(/\D/g, '');
-    console.log(`Digits: "${digits}"`);
+function extractFromConfirmation(text) {
+    // Look for pattern: "I have NAME at postcode POSTCODE with phone number PHONE"
+    const nameMatch = text.match(/I have ([A-Za-z]+)/i);
+    const postcodeMatch = text.match(/postcode ([A-Z0-9\s]{6,8})/i);
+    const phoneMatch = text.match(/phone number ([0-9\s]{10,12})/i);
     
-    const index = digits.indexOf('07');
-    if (index !== -1) {
-        const phone = digits.substring(index, index + 11);
-        if (phone.length === 11 && phone.startsWith('07')) {
-            return phone;
-        }
-    }
-    return null;
+    return {
+        name: nameMatch ? nameMatch[1] : null,
+        postcode: postcodeMatch ? postcodeMatch[1].trim().toUpperCase() : null,
+        phone: phoneMatch ? phoneMatch[1].replace(/\s/g, '') : null
+    };
 }
 
 app.post('/retell-webhook', (req, res) => {
     const { event, call } = req.body;
     
     console.log('Webhook received:', event);
-    
-    // MUST respond with plain text "OK" - nothing else
     res.status(200).send('OK');
     
     if (event === 'call_ended' && call) {
-        console.log('Processing call...');
-        
         const transcript = call.transcript || '';
-        const phoneNumber = findPhoneNumber(transcript);
+        console.log('Transcript:', transcript);
         
-        if (phoneNumber && CONTRACTOR_PHONE_NUMBER) {
-            twilioClient.messages.create({
-                body: `New lead: ${phoneNumber}`,
-                from: TWILIO_PHONE_NUMBER,
-                to: CONTRACTOR_PHONE_NUMBER
-            })
-            .then(() => console.log('SMS sent'))
-            .catch(err => console.error('SMS error:', err.message));
+        // Find the confirmation message (last Agent message before User says Yes)
+        const lines = transcript.split('\n');
+        let confirmationLine = null;
+        
+        for (let i = 0; i < lines.length; i++) {
+            if (lines[i].includes('confirm') && lines[i].includes('I have')) {
+                confirmationLine = lines[i];
+                break;
+            }
+        }
+        
+        if (confirmationLine) {
+            const lead = extractFromConfirmation(confirmationLine);
+            console.log('Extracted:', lead);
+            
+            if (lead.phone && CONTRACTOR_PHONE_NUMBER) {
+                twilioClient.messages.create({
+                    body: `New lead!\nName: ${lead.name}\nPostcode: ${lead.postcode}\nPhone: ${lead.phone}`,
+                    from: TWILIO_PHONE_NUMBER,
+                    to: CONTRACTOR_PHONE_NUMBER
+                })
+                .then(() => console.log('SMS sent'))
+                .catch(err => console.error('SMS error:', err.message));
+            }
         } else {
-            console.log('No phone found');
+            console.log('No confirmation found');
         }
     }
 });
