@@ -16,49 +16,44 @@ app.get('/', (req, res) => {
     res.send('FlowSpeak backend is running!');
 });
 
+// SUPER SIMPLE - just find all digits and look for 07
+function findPhoneNumber(text) {
+    // Remove everything except digits
+    const digits = text.replace(/\D/g, '');
+    console.log(`All digits found: "${digits}"`);
+    
+    // Look for '07' pattern
+    const index = digits.indexOf('07');
+    if (index !== -1) {
+        const phone = digits.substring(index, index + 11);
+        if (phone.length === 11 && phone.startsWith('07')) {
+            console.log(`✅ Phone found: ${phone}`);
+            return phone;
+        }
+    }
+    
+    return null;
+}
+
 app.post('/retell-webhook', (req, res) => {
     const { event, call } = req.body;
     
     console.log('=== Webhook Received ===');
     console.log('Event:', event);
     
-    // LOG THE ENTIRE WEBHOOK TO SEE EVERYTHING
-    console.log('=== FULL WEBHOOK BODY ===');
-    console.log(JSON.stringify(req.body, null, 2));
-    
     res.status(200).json({ received: true });
     
     if (event === 'call_ended' && call) {
-        // Check different places where variables might be
-        console.log('=== Checking all possible variable locations ===');
-        console.log('call.variables:', call.variables);
-        console.log('call.custom_analysis_data:', call.call_analysis?.custom_analysis_data);
-        console.log('call.user_variables:', call.user_variables);
-        
-        // Try to find phone number from transcript as fallback
+        // Get the full transcript
         const transcript = call.transcript || '';
-        let extractedPhone = null;
+        console.log('=== Full Transcript ===');
+        console.log(transcript);
         
-        // Look for phone pattern in transcript
-        const lines = transcript.split('\n');
-        for (const line of lines) {
-            if (line.startsWith('User:')) {
-                const digits = line.replace(/\D/g, '');
-                if (digits.length >= 10) {
-                    const sevenIndex = digits.indexOf('07');
-                    if (sevenIndex !== -1) {
-                        extractedPhone = digits.substring(sevenIndex, sevenIndex + 11);
-                        break;
-                    }
-                }
-            }
-        }
+        // Extract phone number from transcript
+        const phoneNumber = findPhoneNumber(transcript);
         
-        console.log('=== Extracted Phone from Transcript ===');
-        console.log(extractedPhone);
-        
-        if (extractedPhone && CONTRACTOR_PHONE_NUMBER) {
-            const smsBody = `New Lead!\nPhone: ${extractedPhone}`;
+        if (phoneNumber && CONTRACTOR_PHONE_NUMBER) {
+            const smsBody = `New Lead!\nPhone: ${phoneNumber}`;
             
             twilioClient.messages.create({
                 body: smsBody,
@@ -68,7 +63,7 @@ app.post('/retell-webhook', (req, res) => {
             .then(() => console.log('✅ SMS sent successfully'))
             .catch(err => console.error('❌ Failed to send SMS:', err.message));
         } else {
-            console.log('❌ Cannot send SMS - no phone found');
+            console.log('❌ No phone number found');
         }
     }
 });
