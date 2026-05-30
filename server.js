@@ -16,118 +16,117 @@ app.get('/', (req, res) => {
     res.send('FlowSpeak backend is running!');
 });
 
-function validatePhoneNumber(phone) {
-    if (!phone) return null;
-    
-    const wordMap = {
-        'zero': '0', 'one': '1', 'two': '2', 'three': '3', 'four': '4',
-        'five': '5', 'six': '6', 'seven': '7', 'eight': '8', 'nine': '9', 'oh': '0'
-    };
-    
-    let converted = phone.toLowerCase();
-    for (const [word, digit] of Object.entries(wordMap)) {
-        converted = converted.replace(new RegExp(`\\b${word}\\b`, 'g'), digit);
-    }
-    
-    let clean = converted.replace(/\D/g, '');
-    
-    if (clean.length === 12 && clean.startsWith('07')) {
-        clean = clean.substring(0, 11);
-    }
-    if (clean.length === 10 && clean.startsWith('7')) {
-        clean = '0' + clean;
-    }
-    
-    return clean.match(/^07[0-9]{9}$/) ? clean : null;
-}
-
-function validatePostcode(postcode) {
-    if (!postcode) return null;
-    
-    const wordMap = {
-        'zero': '0', 'one': '1', 'two': '2', 'three': '3', 'four': '4',
-        'five': '5', 'six': '6', 'seven': '7', 'eight': '8', 'nine': '9',
-        'bee': 'B', 'see': 'C', 'dee': 'D', 'gee': 'G', 'pee': 'P',
-        'are': 'R', 'ess': 'S', 'tee': 'T', 'why': 'Y', 'ex': 'X',
-        'zed': 'Z', 'aitch': 'H', 'jay': 'J', 'kay': 'K', 'ell': 'L',
-        'em': 'M', 'en': 'N', 'cue': 'Q', 'you': 'U', 'vee': 'V', 'double you': 'W'
-    };
-    
-    let converted = postcode.toLowerCase();
-    for (const [word, letter] of Object.entries(wordMap)) {
-        converted = converted.replace(new RegExp(`\\b${word}\\b`, 'g'), letter);
-    }
-    
-    let clean = converted.replace(/\s/g, '').toUpperCase();
-    
-    if (clean.length === 7 && !clean.includes(' ')) {
-        clean = clean.substring(0, 4) + ' ' + clean.substring(4);
-    }
-    
-    return clean.match(/^[A-Z]{1,2}[0-9]{1,2}[A-Z]?\s[0-9][A-Z]{2}$/) ? clean : null;
-}
-
-function validateName(name) {
-    if (!name) return null;
-    let clean = name.replace(/^(my name is|it's|this is|im|i am)/i, '').trim();
-    clean = clean.split(' ')[0];
-    return clean ? clean.charAt(0).toUpperCase() + clean.slice(1).toLowerCase() : null;
-}
-
+// SIMPLIFIED EXTRACTION - just look for digits
 function extractLeadInfo(transcript) {
     const lead = { name: null, postcode: null, phone: null };
     const lines = transcript.split('\n');
-    let lastPhone = null, lastPostcode = null, lastName = null;
+    let lastPhone = null;
+    let lastPostcode = null;
+    let lastName = null;
     
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
         
+        // Get name - look for "first name" question followed by User response
         if (line.toLowerCase().includes('first name') && i + 1 < lines.length && lines[i + 1].startsWith('User:')) {
-            const match = lines[i + 1].match(/User:\s*(?:My name is |My first name is )?([A-Za-z]+)/i);
-            if (match) lastName = match[1];
+            const nameText = lines[i + 1].substring(5);
+            // Take first word that looks like a name (2+ letters)
+            const words = nameText.split(' ');
+            for (const word of words) {
+                if (word.match(/^[A-Za-z]{2,}$/)) {
+                    lastName = word;
+                    break;
+                }
+            }
         }
         
+        // Process User lines for phone and postcode
         if (line.startsWith('User:')) {
             const userText = line.substring(5);
             
-            const phoneMatch = userText.match(/0[0-9\s\.\-]{9,15}/);
-            if (phoneMatch) lastPhone = phoneMatch[0];
+            // PHONE: extract ALL digits, then find UK pattern
+            const digits = userText.replace(/\D/g, '');
+            console.log(`Digits found in line: "${digits}"`);
             
-            const postcodeMatch = userText.match(/[A-Z]{1,2}[0-9]{1,2}[A-Z]?\s?[0-9][A-Z]{2}|\b(?:BS|B|BA|SN|GL)[0-9]{1,2}\s?[0-9][A-Z]{2}/i);
-            if (postcodeMatch) lastPostcode = postcodeMatch[0];
+            if (digits.length >= 10) {
+                // Look for '07' pattern (UK mobile)
+                const sevenIndex = digits.indexOf('07');
+                if (sevenIndex !== -1) {
+                    let potentialPhone = digits.substring(sevenIndex);
+                    if (potentialPhone.length >= 11) {
+                        lastPhone = potentialPhone.substring(0, 11);
+                    } else if (potentialPhone.length === 10) {
+                        lastPhone = '0' + potentialPhone;
+                    }
+                    console.log(`Phone extracted: ${lastPhone}`);
+                }
+            }
+            
+            // POSTCODE: look for UK postcode pattern
+            const upperText = userText.toUpperCase();
+            const postcodeMatch = upperText.match(/[A-Z]{1,2}[0-9]{1,2}[A-Z]?\s?[0-9][A-Z]{2}/);
+            if (postcodeMatch) {
+                lastPostcode = postcodeMatch[0];
+                console.log(`Postcode extracted: ${lastPostcode}`);
+            }
         }
     }
     
-    lead.name = validateName(lastName);
-    lead.postcode = validatePostcode(lastPostcode);
-    lead.phone = validatePhoneNumber(lastPhone);
+    // Clean up postcode (add space if missing)
+    if (lastPostcode && lastPostcode.length === 7 && !lastPostcode.includes(' ')) {
+        lastPostcode = lastPostcode.substring(0, 4) + ' ' + lastPostcode.substring(4);
+    }
+    
+    // Clean up name
+    if (lastName) {
+        lead.name = lastName.charAt(0).toUpperCase() + lastName.slice(1).toLowerCase();
+    }
+    
+    lead.postcode = lastPostcode ? lastPostcode.toUpperCase() : null;
+    lead.phone = lastPhone;
+    
+    console.log('=== FINAL EXTRACTED ===');
+    console.log(`Name: ${lead.name}`);
+    console.log(`Postcode: ${lead.postcode}`);
+    console.log(`Phone: ${lead.phone}`);
     
     return lead;
 }
 
 app.post('/retell-webhook', (req, res) => {
     const { event, call } = req.body;
-    console.log('=== Webhook Received ===', event);
+    
+    console.log('=== Webhook Received ===');
+    console.log('Event:', event);
+    
+    // Respond immediately
     res.status(200).json({ received: true });
     
     if (event === 'call_ended' && call) {
-        console.log('=== Transcript ===\n', call.transcript);
+        console.log('=== Full Transcript ===');
+        console.log(call.transcript);
+        
         const leadInfo = extractLeadInfo(call.transcript);
-        console.log('=== Extracted ===\n', leadInfo);
         
         if (leadInfo.phone && CONTRACTOR_PHONE_NUMBER) {
-            const smsBody = `New Lead!\nName: ${leadInfo.name || '?'}\nPostcode: ${leadInfo.postcode || '?'}\nPhone: ${leadInfo.phone}`;
+            const smsBody = `New Lead!\n\nName: ${leadInfo.name || 'Not provided'}\nPostcode: ${leadInfo.postcode || 'Not provided'}\nPhone: ${leadInfo.phone}`;
+            
             twilioClient.messages.create({
                 body: smsBody,
                 from: TWILIO_PHONE_NUMBER,
                 to: CONTRACTOR_PHONE_NUMBER
             })
-            .then(() => console.log('✅ SMS sent'))
-            .catch(err => console.error('❌ SMS failed:', err.message));
+            .then(() => console.log('✅ SMS sent successfully'))
+            .catch(err => console.error('❌ Failed to send SMS:', err.message));
         } else {
-            console.log('❌ No phone extracted');
+            console.log('❌ Cannot send SMS - missing phone or contractor number');
+            console.log(`Phone extracted: ${leadInfo.phone}`);
+            console.log(`Contractor number: ${CONTRACTOR_PHONE_NUMBER}`);
         }
     }
 });
 
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+    console.log(`Retell webhook endpoint: http://localhost:${PORT}/retell-webhook`);
+});
