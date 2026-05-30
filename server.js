@@ -19,13 +19,12 @@ app.get('/', (req, res) => {
 function findPhoneNumber(text) {
     if (!text) return null;
     const digits = text.replace(/\D/g, '');
-    console.log(`All digits found: "${digits}"`);
+    console.log(`Digits: "${digits}"`);
     
     const index = digits.indexOf('07');
     if (index !== -1) {
         const phone = digits.substring(index, index + 11);
         if (phone.length === 11 && phone.startsWith('07')) {
-            console.log(`✅ Phone found: ${phone}`);
             return phone;
         }
     }
@@ -35,38 +34,31 @@ function findPhoneNumber(text) {
 app.post('/retell-webhook', (req, res) => {
     const { event, call } = req.body;
     
-    console.log('=== Webhook Received ===');
-    console.log('Event:', event);
+    console.log('Webhook received:', event);
     
-    // ALWAYS respond immediately
-    res.status(200).json({ received: true });
+    // MUST respond with plain text "OK" - nothing else
+    res.status(200).send('OK');
     
-    // Process after responding (no await needed)
     if (event === 'call_ended' && call) {
-        try {
-            const transcript = call.transcript || '';
-            console.log('=== Full Transcript ===');
-            console.log(transcript);
-            
-            const phoneNumber = findPhoneNumber(transcript);
-            
-            if (phoneNumber && CONTRACTOR_PHONE_NUMBER) {
-                twilioClient.messages.create({
-                    body: `New Lead!\nPhone: ${phoneNumber}`,
-                    from: TWILIO_PHONE_NUMBER,
-                    to: CONTRACTOR_PHONE_NUMBER
-                })
-                .then(() => console.log('✅ SMS sent successfully'))
-                .catch(err => console.error('❌ SMS error:', err.message));
-            } else {
-                console.log('❌ No phone number found');
-            }
-        } catch (error) {
-            console.error('Error:', error.message);
+        console.log('Processing call...');
+        
+        const transcript = call.transcript || '';
+        const phoneNumber = findPhoneNumber(transcript);
+        
+        if (phoneNumber && CONTRACTOR_PHONE_NUMBER) {
+            twilioClient.messages.create({
+                body: `New lead: ${phoneNumber}`,
+                from: TWILIO_PHONE_NUMBER,
+                to: CONTRACTOR_PHONE_NUMBER
+            })
+            .then(() => console.log('SMS sent'))
+            .catch(err => console.error('SMS error:', err.message));
+        } else {
+            console.log('No phone found');
         }
     }
 });
 
 app.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+    console.log(`Server running on port ${PORT}`);
 });
