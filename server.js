@@ -30,27 +30,37 @@ function extractLeadInfo(transcript) {
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i];
         
-        // Extract name
+        // Extract name - look for User response after name request
         if (line.includes('first name') && i + 1 < lines.length) {
             const nextLine = lines[i + 1];
-            const nameMatch = nextLine.match(/User: (?:My first name is )?([A-Za-z]+)/i);
-            if (nameMatch) lead.name = nameMatch[1];
+            if (nextLine.startsWith('User:')) {
+                const nameMatch = nextLine.match(/User:\s*([A-Za-z]+)/i);
+                if (nameMatch && !lead.name) {
+                    lead.name = nameMatch[1];
+                }
+            }
         }
         
-        // Extract postcode (UK format)
-        const postcodeMatch = line.match(/[A-Z]{1,2}[0-9][A-Z0-9]? ?[0-9][A-Z]{2}/i);
-        if (postcodeMatch && !lead.postcode) {
-            lead.postcode = postcodeMatch[0].toUpperCase();
-        }
-        
-        // Extract phone number - accepts 11 or 12 digits (handles customer mistakes)
-        const phoneMatch = line.match(/0[0-9\s\.\-]{10,16}/);
-        if (phoneMatch && !lead.phone) {
-            // Remove spaces, dots, dashes and keep only digits
-            let phoneNumber = phoneMatch[0].replace(/[\s\.\-]/g, '');
-            // Accept 11 or 12 digit numbers starting with 0
-            // If 12 digits, take the first 11 (remove the extra digit)
-            if (phoneNumber.match(/^0[0-9]{10,11}$/)) {
+        // Only process User lines for postcode and phone
+        if (line.startsWith('User:')) {
+            // Extract postcode (UK format) - looks for patterns like BS13 7DP or BS137DP
+            const postcodeMatch = line.match(/[A-Z]{1,2}[0-9]{1,2}[A-Z]?\s?[0-9][A-Z]{2}/i);
+            if (postcodeMatch && !lead.postcode) {
+                let postcode = postcodeMatch[0].toUpperCase();
+                // Add space if missing (BS137DP -> BS13 7DP)
+                if (postcode.length === 7 && !postcode.includes(' ')) {
+                    postcode = postcode.substring(0, 4) + ' ' + postcode.substring(4);
+                }
+                lead.postcode = postcode;
+            }
+            
+            // Extract phone number - looks for 0 followed by 10-11 digits
+            // Remove spaces first, then find the number
+            const cleanLine = line.replace(/\s/g, '');
+            const phoneMatch = cleanLine.match(/0[0-9]{10,11}/);
+            if (phoneMatch && !lead.phone) {
+                let phoneNumber = phoneMatch[0];
+                // If 12 digits, take first 11
                 if (phoneNumber.length === 12) {
                     phoneNumber = phoneNumber.substring(0, 11);
                 }
