@@ -18,18 +18,18 @@ app.get('/', (req, res) => {
 
 // NEW: Endpoint for Retell Code node
 app.post('/send-sms', (req, res) => {
-    const { name, postcode, phone, cleanType, dateTime } = req.body;  // ADDED: cleanType, dateTime
+    const { name, postcode, phone, cleanType, dateTime } = req.body;
     
     console.log('=== SMS Request ===');
     console.log('Name:', name);
     console.log('Postcode:', postcode);
     console.log('Phone:', phone);
-    console.log('Clean type:', cleanType || 'Not specified');  // ADDED: log clean type
-    console.log('Date & Time:', dateTime || 'Not specified');  // ADDED: log date/time
+    console.log('Clean type:', cleanType);
+    console.log('Date & Time:', dateTime);
     
     if (phone && CONTRACTOR_PHONE_NUMBER) {
         twilioClient.messages.create({
-            body: `New lead!\nName: ${name || '?'}\nPostcode: ${postcode || '?'}\nPhone: ${phone}\nClean type: ${cleanType || '?'}\nDate & Time: ${dateTime || '?'}`,  // ADDED: clean type and date/time in SMS
+            body: `New lead!\nName: ${name || '?'}\nPostcode: ${postcode || '?'}\nPhone: ${phone}\nClean type: ${cleanType || '?'}\nDate & Time: ${dateTime || '?'}`,
             from: TWILIO_PHONE_NUMBER,
             to: CONTRACTOR_PHONE_NUMBER
         })
