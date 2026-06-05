@@ -52,11 +52,12 @@ app.post('/retell-webhook', (req, res) => {
     res.status(200).send('OK');
 });
 
-// Post-call webhook (corrected to match Retell's actual data structure)
+// Post-call webhook - CORRECT VERSION
 app.post('/post-call-webhook', (req, res) => {
-    console.log('RAW BODY:', JSON.stringify(req.body, null, 2));
-    
     const body = req.body;
+    
+    console.log('🔔 WEBHOOK RECEIVED');
+    console.log('Event type:', body.event);
     
     let name = '', postcode = '', phone = '', cleanType = '', dateTime = '';
     
@@ -68,9 +69,12 @@ app.post('/post-call-webhook', (req, res) => {
         phone = data.phone_number || '';
         cleanType = data['type of cleaning'] || '';
         dateTime = data.dateTime || '';
+        console.log('✅ Extracted from call_analysis.custom_analysis_data');
+    } else {
+        console.log('⚠️ No custom_analysis_data found in webhook');
     }
     
-    console.log('=== Post-Call Webhook ===');
+    console.log('=== Extracted Data ===');
     console.log('Name:', name);
     console.log('Postcode:', postcode);
     console.log('Phone:', phone);
@@ -95,13 +99,6 @@ app.post('/post-call-webhook', (req, res) => {
         console.log('❌ Missing phone or contractor number');
         res.status(200).send('OK');
     }
-});
-
-// DEBUG: Catch any request to /webhook-test
-app.post('/webhook-test', (req, res) => {
-    console.log('🔔🔔🔔 TEST WEBHOOK TRIGGERED 🔔🔔🔔');
-    console.log('RAW BODY:', JSON.stringify(req.body, null, 2));
-    res.status(200).send('OK');
 });
 
 app.listen(PORT, () => {
