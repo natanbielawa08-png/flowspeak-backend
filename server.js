@@ -52,7 +52,7 @@ app.post('/retell-webhook', (req, res) => {
     res.status(200).send('OK');
 });
 
-// Post-call webhook (correctly reads Retell's actual data structure)
+// Post-call webhook (corrected to match Retell's actual data structure)
 app.post('/post-call-webhook', (req, res) => {
     console.log('RAW BODY:', JSON.stringify(req.body, null, 2));
     
@@ -60,17 +60,17 @@ app.post('/post-call-webhook', (req, res) => {
     
     let name = '', postcode = '', phone = '', cleanType = '', dateTime = '';
     
-    if (body.event === 'call_analyzed' && body.data) {
-        const analysis = body.data.analysis || {};
-        name = analysis.name || '';
-        postcode = analysis.postcode || '';
-        phone = analysis.phone_number || '';
-        cleanType = analysis['type of cleaning'] || '';
-        dateTime = analysis.dateTime || '';
+    // The data is in call_analysis.custom_analysis_data
+    if (body.call_analysis && body.call_analysis.custom_analysis_data) {
+        const data = body.call_analysis.custom_analysis_data;
+        name = data.name || '';
+        postcode = data.postcode || '';
+        phone = data.phone_number || '';
+        cleanType = data['type of cleaning'] || '';
+        dateTime = data.dateTime || '';
     }
     
     console.log('=== Post-Call Webhook ===');
-    console.log('Event:', body.event);
     console.log('Name:', name);
     console.log('Postcode:', postcode);
     console.log('Phone:', phone);
