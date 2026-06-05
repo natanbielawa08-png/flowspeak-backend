@@ -54,6 +54,7 @@ app.post('/retell-webhook', (req, res) => {
 
 // Post-call webhook (correctly reads Retell's actual data structure)
 app.post('/post-call-webhook', (req, res) => {
+     console.log('RAW BODY:', JSON.stringify(req.body, null, 2));
     const body = req.body;
     
     let name = '', postcode = '', phone = '', cleanType = '', dateTime = '';
