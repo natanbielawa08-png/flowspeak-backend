@@ -52,17 +52,23 @@ app.post('/retell-webhook', (req, res) => {
     res.status(200).send('OK');
 });
 
-// NEW: Post-call webhook (triggers after call ends automatically)
+// Post-call webhook (correctly reads Retell's actual data structure)
 app.post('/post-call-webhook', (req, res) => {
-    const { call } = req.body;
+    const body = req.body;
     
-    const name = call?.dynamic_data?.name || '';
-    const postcode = call?.dynamic_data?.postcode || '';
-    const phone = call?.dynamic_data?.phone || '';
-    const cleanType = call?.dynamic_data?.cleanType || '';
-    const dateTime = call?.dynamic_data?.dateTime || '';
+    let name = '', postcode = '', phone = '', cleanType = '', dateTime = '';
+    
+    if (body.event === 'call_analyzed' && body.data) {
+        const analysis = body.data.analysis || {};
+        name = analysis.name || '';
+        postcode = analysis.postcode || '';
+        phone = analysis.phone_number || '';
+        cleanType = analysis['type of cleaning'] || '';
+        dateTime = analysis.dateTime || '';
+    }
     
     console.log('=== Post-Call Webhook ===');
+    console.log('Event:', body.event);
     console.log('Name:', name);
     console.log('Postcode:', postcode);
     console.log('Phone:', phone);
@@ -77,7 +83,7 @@ app.post('/post-call-webhook', (req, res) => {
         })
         .then(() => {
             console.log('✅ SMS sent from post-call webhook');
-            res.json({ success: true });
+            res.status(200).send('OK');
         })
         .catch(err => {
             console.error('❌ SMS error:', err.message);
@@ -85,7 +91,7 @@ app.post('/post-call-webhook', (req, res) => {
         });
     } else {
         console.log('❌ Missing phone or contractor number');
-        res.status(400).json({ success: false, error: 'Missing phone' });
+        res.status(200).send('OK');
     }
 });
 
