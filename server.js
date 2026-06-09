@@ -52,7 +52,7 @@ app.post('/retell-webhook', (req, res) => {
     res.status(200).send('OK');
 });
 
-// Post-call webhook - CORRECT VERSION
+// Post-call webhook - UNIVERSAL EXTRACTOR
 app.post('/post-call-webhook', (req, res) => {
     const body = req.body;
     
@@ -61,7 +61,7 @@ app.post('/post-call-webhook', (req, res) => {
     
     let name = '', postcode = '', phone = '', cleanType = '', dateTime = '';
     
-    // The data is in call_analysis.custom_analysis_data
+    // Try multiple possible locations for the data
     if (body.call_analysis && body.call_analysis.custom_analysis_data) {
         const data = body.call_analysis.custom_analysis_data;
         name = data.name || '';
@@ -69,9 +69,30 @@ app.post('/post-call-webhook', (req, res) => {
         phone = data.phone_number || '';
         cleanType = data['type of cleaning'] || '';
         dateTime = data.dateTime || '';
-        console.log('✅ Extracted from call_analysis.custom_analysis_data');
-    } else {
-        console.log('⚠️ No custom_analysis_data found in webhook');
+        console.log('✅ Found in call_analysis.custom_analysis_data');
+    }
+    else if (body.data && body.data.analysis) {
+        const data = body.data.analysis;
+        name = data.name || '';
+        postcode = data.postcode || '';
+        phone = data.phone_number || '';
+        cleanType = data['type of cleaning'] || '';
+        dateTime = data.dateTime || '';
+        console.log('✅ Found in data.analysis');
+    }
+    else if (body.custom_analysis_data) {
+        const data = body.custom_analysis_data;
+        name = data.name || '';
+        postcode = data.postcode || '';
+        phone = data.phone_number || '';
+        cleanType = data['type of cleaning'] || '';
+        dateTime = data.dateTime || '';
+        console.log('✅ Found in custom_analysis_data');
+    }
+    else {
+        console.log('⚠️ No known data structure found. Full body keys:', Object.keys(body));
+        // Log the first 500 chars of the body to see what we got
+        console.log('📦 Body preview:', JSON.stringify(body).substring(0, 500));
     }
     
     console.log('=== Extracted Data ===');
