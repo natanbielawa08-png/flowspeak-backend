@@ -16,6 +16,26 @@ app.get('/', (req, res) => {
     res.send('FlowSpeak backend is running!');
 });
 
+// Helper function to try multiple variations of a variable name
+function getValue(obj, ...possibleNames) {
+    for (let name of possibleNames) {
+        if (obj[name] !== undefined && obj[name] !== '') {
+            return obj[name];
+        }
+    }
+    // If no exact match, try case-insensitive matching on all keys
+    for (let key of Object.keys(obj)) {
+        const normalizedKey = key.toLowerCase().replace(/ /g, '');
+        for (let possibleName of possibleNames) {
+            const normalizedPossible = possibleName.toLowerCase().replace(/ /g, '');
+            if (normalizedKey === normalizedPossible) {
+                return obj[key];
+            }
+        }
+    }
+    return '';
+}
+
 app.post('/send-sms', (req, res) => {
     const { name, postcode, phone, cleanType, dateTime } = req.body;
     
@@ -60,14 +80,24 @@ app.post('/post-call-webhook', (req, res) => {
     
     if (body.call && body.call.collected_dynamic_variables) {
         const data = body.call.collected_dynamic_variables;
-        name = data.name || '';
-        postcode = data.postcode || '';
-        phone = data.phone || '';
-        cleanType = data.cleanType || '';
-        dateTime = data.dateTime || '';
+        
+        // Using the forgiving helper function that tries multiple variations
+        name = getValue(data, 'name', 'Name', 'full_name', 'fullName');
+        postcode = getValue(data, 'postcode', 'Postcode', 'post_code', 'postCode', 'zip', 'postal_code');
+        phone = getValue(data, 'phone', 'Phone', 'phone_number', 'phoneNumber', 'mobile', 'Mobile');
+        cleanType = getValue(data, 'cleanType', 'CleanType', 'clean_type', 'clean type', 'type_of_cleaning', 'cleaningType');
+        dateTime = getValue(data, 'dateTime', 'DateTime', 'date_time', 'date time', 'date_and_time', 'date and time', 'appointment_time');
+        
         console.log('✅ Found in call.collected_dynamic_variables');
+        
+        // Debug: Show what keys Retell actually sent
+        console.log('📦 Keys received from Retell:', Object.keys(data));
     } else {
         console.log('⚠️ No collected_dynamic_variables found');
+        console.log('📦 Body keys:', Object.keys(body));
+        if (body.call) {
+            console.log('📦 call keys:', Object.keys(body.call));
+        }
     }
     
     console.log('=== Extracted Data ===');
