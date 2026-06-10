@@ -37,9 +37,10 @@ function getValue(obj, ...possibleNames) {
 }
 
 app.post('/send-sms', (req, res) => {
-    const { name, postcode, phone, cleanType, dateTime } = req.body;
+    const { name, postcode, phone, cleanType, dateTime, bookingType } = req.body;
     
     console.log('=== SMS Request ===');
+    console.log('Booking Type:', bookingType);
     console.log('Name:', name);
     console.log('Postcode:', postcode);
     console.log('Phone:', phone);
@@ -48,7 +49,7 @@ app.post('/send-sms', (req, res) => {
     
     if (phone && CONTRACTOR_PHONE_NUMBER) {
         twilioClient.messages.create({
-            body: `New lead!\nName: ${name || '?'}\nPostcode: ${postcode || '?'}\nPhone: ${phone}\nClean type: ${cleanType || '?'}\nDate & Time: ${dateTime || '?'}`,
+            body: `New ${bookingType || 'booking'}!\nName: ${name || '?'}\nPostcode: ${postcode || '?'}\nPhone: ${phone}\nClean type: ${cleanType || '?'}\nDate & Time: ${dateTime || '?'}`,
             from: TWILIO_PHONE_NUMBER,
             to: CONTRACTOR_PHONE_NUMBER
         })
@@ -76,7 +77,7 @@ app.post('/post-call-webhook', (req, res) => {
     console.log('🔔 WEBHOOK RECEIVED');
     console.log('Event type:', body.event);
     
-    let name = '', postcode = '', phone = '', cleanType = '', dateTime = '';
+    let name = '', postcode = '', phone = '', cleanType = '', dateTime = '', bookingType = '';
     
     if (body.call && body.call.collected_dynamic_variables) {
         const data = body.call.collected_dynamic_variables;
@@ -87,6 +88,7 @@ app.post('/post-call-webhook', (req, res) => {
         phone = getValue(data, 'phone', 'Phone', 'phone_number', 'phoneNumber', 'mobile', 'Mobile');
         cleanType = getValue(data, 'cleanType', 'CleanType', 'clean_type', 'clean type', 'type_of_cleaning', 'cleaningType');
         dateTime = getValue(data, 'dateTime', 'DateTime', 'date_time', 'date time', 'date_and_time', 'date and time', 'appointment_time');
+        bookingType = getValue(data, 'bookingType', 'BookingType', 'booking_type', 'booking type', 'intent', 'call_type', 'callType');
         
         console.log('✅ Found in call.collected_dynamic_variables');
         
@@ -101,6 +103,7 @@ app.post('/post-call-webhook', (req, res) => {
     }
     
     console.log('=== Extracted Data ===');
+    console.log('Booking Type:', bookingType);
     console.log('Name:', name);
     console.log('Postcode:', postcode);
     console.log('Phone:', phone);
@@ -109,7 +112,7 @@ app.post('/post-call-webhook', (req, res) => {
     
     if (phone && CONTRACTOR_PHONE_NUMBER) {
         twilioClient.messages.create({
-            body: `New lead!\nName: ${name || '?'}\nPostcode: ${postcode || '?'}\nPhone: ${phone}\nClean type: ${cleanType || '?'}\nDate & Time: ${dateTime || '?'}`,
+            body: `New ${bookingType || 'booking'}!\nName: ${name || '?'}\nPostcode: ${postcode || '?'}\nPhone: ${phone}\nClean type: ${cleanType || '?'}\nDate & Time: ${dateTime || '?'}`,
             from: TWILIO_PHONE_NUMBER,
             to: CONTRACTOR_PHONE_NUMBER
         })
