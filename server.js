@@ -52,7 +52,7 @@ app.post('/retell-webhook', (req, res) => {
     res.status(200).send('OK');
 });
 
-// Post-call webhook - FINAL WORKING VERSION
+// Post-call webhook - FIXED for Retell's actual variable names
 app.post('/post-call-webhook', (req, res) => {
     const body = req.body;
     
@@ -67,8 +67,9 @@ app.post('/post-call-webhook', (req, res) => {
         name = data.name || '';
         postcode = data.postcode || '';
         phone = data.phone || '';
-        cleanType = data.cleanType || '';
-        dateTime = data.dateTime || '';
+        // FIX: Retell uses "CleanType" (capital C, capital T) and "date and time" (with spaces)
+        cleanType = data.CleanType || '';
+        dateTime = data['date and time'] || '';
         console.log('✅ Found in call.collected_dynamic_variables');
     } else {
         console.log('⚠️ No collected_dynamic_variables found');
