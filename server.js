@@ -16,7 +16,6 @@ app.get('/', (req, res) => {
     res.send('FlowSpeak backend is running!');
 });
 
-// Endpoint for Retell Code node (kept for compatibility)
 app.post('/send-sms', (req, res) => {
     const { name, postcode, phone, cleanType, dateTime } = req.body;
     
@@ -47,12 +46,10 @@ app.post('/send-sms', (req, res) => {
     }
 });
 
-// Backup webhook
 app.post('/retell-webhook', (req, res) => {
     res.status(200).send('OK');
 });
 
-// Post-call webhook - FIXED for Retell's actual variable names
 app.post('/post-call-webhook', (req, res) => {
     const body = req.body;
     
@@ -61,22 +58,16 @@ app.post('/post-call-webhook', (req, res) => {
     
     let name = '', postcode = '', phone = '', cleanType = '', dateTime = '';
     
-    // Data is in call.collected_dynamic_variables
     if (body.call && body.call.collected_dynamic_variables) {
         const data = body.call.collected_dynamic_variables;
         name = data.name || '';
         postcode = data.postcode || '';
         phone = data.phone || '';
-        // FIX: Retell uses "CleanType" (capital C, capital T) and "date and time" (with spaces)
-        cleanType = data.CleanType || '';
-        dateTime = data['date and time'] || '';
+        cleanType = data.cleanType || '';
+        dateTime = data.dateTime || '';
         console.log('✅ Found in call.collected_dynamic_variables');
     } else {
         console.log('⚠️ No collected_dynamic_variables found');
-        console.log('📦 Body keys:', Object.keys(body));
-        if (body.call) {
-            console.log('📦 call keys:', Object.keys(body.call));
-        }
     }
     
     console.log('=== Extracted Data ===');
