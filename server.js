@@ -18,6 +18,7 @@ app.get('/', (req, res) => {
 
 // Helper function to try multiple variations of a variable name
 function getValue(obj, ...possibleNames) {
+    if (!obj) return '';
     for (let name of possibleNames) {
         if (obj[name] !== undefined && obj[name] !== '') {
             return obj[name];
@@ -79,10 +80,10 @@ app.post('/post-call-webhook', (req, res) => {
     
     let name = '', postcode = '', phone = '', cleanType = '', dateTime = '', bookingType = '';
     
+    // PRIMARY SOURCE: collected_dynamic_variables (from Extract Variable nodes)
     if (body.call && body.call.collected_dynamic_variables) {
         const data = body.call.collected_dynamic_variables;
         
-        // Using the forgiving helper function that tries multiple variations
         name = getValue(data, 'name', 'Name', 'full_name', 'fullName');
         postcode = getValue(data, 'postcode', 'Postcode', 'post_code', 'postCode', 'zip', 'postal_code');
         phone = getValue(data, 'phone', 'Phone', 'phone_number', 'phoneNumber', 'mobile', 'Mobile');
@@ -91,15 +92,25 @@ app.post('/post-call-webhook', (req, res) => {
         bookingType = getValue(data, 'bookingType', 'BookingType', 'booking_type', 'booking type', 'intent', 'call_type', 'callType');
         
         console.log('✅ Found in call.collected_dynamic_variables');
-        
-        // Debug: Show what keys Retell actually sent
         console.log('📦 Keys received from Retell:', Object.keys(data));
     } else {
         console.log('⚠️ No collected_dynamic_variables found');
-        console.log('📦 Body keys:', Object.keys(body));
-        if (body.call) {
-            console.log('📦 call keys:', Object.keys(body.call));
-        }
+    }
+    
+    // FALLBACK SOURCE: custom_analysis_data (post-call analysis, always available)
+    // This catches any fields that might have been missed by Extract Variable nodes
+    if (body.call_analysis && body.call_analysis.custom_analysis_data) {
+        const fallback = body.call_analysis.custom_analysis_data;
+        
+        // Only use fallback if primary source didn't have the value
+        if (!name) name = getValue(fallback, 'name', 'Name', 'full_name', 'fullName');
+        if (!postcode) postcode = getValue(fallback, 'postcode', 'Postcode', 'post_code', 'postCode');
+        if (!phone) phone = getValue(fallback, 'phone', 'Phone', 'phone_number', 'phoneNumber', 'mobile');
+        if (!cleanType) cleanType = getValue(fallback, 'cleanType', 'CleanType', 'clean_type', 'clean type', 'type_of_cleaning', 'type of cleaning');
+        if (!dateTime) dateTime = getValue(fallback, 'dateTime', 'DateTime', 'date_time', 'date time', 'date_and_time', 'date and time');
+        if (!bookingType) bookingType = getValue(fallback, 'bookingType', 'BookingType', 'booking_type', 'booking type', 'intent', 'call_type');
+        
+        console.log('📦 Fallback keys from custom_analysis_data:', Object.keys(fallback));
     }
     
     console.log('=== Extracted Data ===');
