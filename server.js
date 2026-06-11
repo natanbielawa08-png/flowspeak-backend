@@ -1,4 +1,4 @@
- const express = require('express');
+const express = require('express');
 const twilio = require('twilio');
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -247,10 +247,14 @@ app.post('/cal/book-appointment', async (req, res) => {
     console.log('📅 Booking appointment for:', name);
     console.log('📞 Phone:', phone);
     console.log('🕒 Time:', time);
-    console.log('📧 Email:', email || 'auto-generated');
     
     try {
-        const attendeeEmail = email || `${name.toLowerCase().replace(/\s/g, '')}@phonebooking.local`;
+        // Generate fake email from phone number and name
+        const cleanPhone = phone.replace(/\D/g, '');
+        const cleanName = name.toLowerCase().replace(/[^a-z]/g, '');
+        const attendeeEmail = `${cleanName}.${cleanPhone}@phone.flowspeak.ai`;
+        
+        console.log('📧 Generated email:', attendeeEmail);
         
         const response = await fetch('https://api.cal.com/v2/bookings', {
             method: 'POST',
