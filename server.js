@@ -241,6 +241,53 @@ app.post('/cal/reschedule-booking', async (req, res) => {
     }
 });
 
+app.post('/cal/book-appointment', async (req, res) => {
+    const { name, phone, email, time } = req.body;
+    
+    console.log('📅 Booking appointment for:', name);
+    console.log('📞 Phone:', phone);
+    console.log('🕒 Time:', time);
+    console.log('📧 Email:', email || 'auto-generated');
+    
+    try {
+        const attendeeEmail = email || `${name.toLowerCase().replace(/\s/g, '')}@phonebooking.local`;
+        
+        const response = await fetch('https://api.cal.com/v2/bookings', {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${process.env.CAL_API_KEY}`,
+                'Content-Type': 'application/json',
+                'cal-api-version': '2024-08-13'
+            },
+            body: JSON.stringify({
+                eventTypeId: 3605482,
+                start: time,
+                attendee: {
+                    name: name,
+                    email: attendeeEmail,
+                    phoneNumber: phone
+                }
+            })
+        });
+        
+        const result = await response.json();
+        console.log('✅ Booking response:', result);
+        
+        if (response.ok) {
+            res.json({ 
+                success: true, 
+                bookingUid: result.data?.uid,
+                result: result 
+            });
+        } else {
+            res.json({ success: false, error: result.error?.message || 'Booking failed' });
+        }
+    } catch (error) {
+        console.error('❌ Booking error:', error.message);
+        res.json({ success: false, error: error.message });
+    }
+});
+
 // ========== END CAL.COM ENDPOINTS ==========
 
 app.listen(PORT, () => {
