@@ -1,4 +1,4 @@
-const express = require('express');
+ const express = require('express');
 const twilio = require('twilio');
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -262,7 +262,7 @@ app.post('/cal/book-appointment', async (req, res) => {
             body: JSON.stringify({
                 eventTypeId: 3605482,
                 start: time,
-                responses: {
+                attendee: {
                     name: name,
                     email: attendeeEmail,
                     phoneNumber: phone
