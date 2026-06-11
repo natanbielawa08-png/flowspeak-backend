@@ -116,6 +116,7 @@ app.post('/post-call-webhook', (req, res) => {
     console.log('Clean type:', cleanType);
     console.log('Date & Time:', dateTime);
     
+    // Send contractor SMS
     if (phone && CONTRACTOR_PHONE_NUMBER) {
         twilioClient.messages.create({
             body: `New ${bookingType || 'booking'}!\nName: ${name || '?'}\nPostcode: ${postcode || '?'}\nPhone: ${phone}\nClean type: ${cleanType || '?'}\nDate & Time: ${dateTime || '?'}`,
@@ -123,17 +124,45 @@ app.post('/post-call-webhook', (req, res) => {
             to: CONTRACTOR_PHONE_NUMBER
         })
         .then(() => {
-            console.log('✅ SMS sent from post-call webhook');
-            res.status(200).send('OK');
+            console.log('✅ Contractor SMS sent');
         })
         .catch(err => {
-            console.error('❌ SMS error:', err.message);
-            res.status(500).json({ success: false, error: err.message });
+            console.error('❌ Contractor SMS error:', err.message);
         });
     } else {
         console.log('❌ Missing phone or contractor number');
-        res.status(200).send('OK');
     }
+    
+    // Send customer confirmation SMS
+    if (phone && phone !== '?') {
+        let actionText = '';
+        
+        if (bookingType === 'booking') {
+            actionText = 'booked';
+        } else if (bookingType === 'cancellation') {
+            actionText = 'cancelled';
+        } else if (bookingType === 'reschedule') {
+            actionText = 'rescheduled';
+        } else {
+            actionText = 'booked';
+        }
+        
+        const customerMessage = `You've successfully ${actionText} a booking with Magdalena Bielawa Cleaning Services!\n\nAny questions? Please contact 07306666123`;
+        
+        twilioClient.messages.create({
+            body: customerMessage,
+            from: TWILIO_PHONE_NUMBER,
+            to: phone
+        })
+        .then(() => {
+            console.log('✅ Customer SMS sent to:', phone);
+        })
+        .catch(err => {
+            console.error('❌ Customer SMS error:', err.message);
+        });
+    }
+    
+    res.status(200).send('OK');
 });
 
 // ========== CAL.COM ENDPOINTS ==========
