@@ -24,7 +24,6 @@ function getValue(obj, ...possibleNames) {
             return obj[name];
         }
     }
-    // If no exact match, try case-insensitive matching on all keys
     for (let key of Object.keys(obj)) {
         const normalizedKey = key.toLowerCase().replace(/ /g, '');
         for (let possibleName of possibleNames) {
@@ -80,7 +79,6 @@ app.post('/post-call-webhook', (req, res) => {
     
     let name = '', postcode = '', phone = '', cleanType = '', dateTime = '', bookingType = '';
     
-    // PRIMARY SOURCE: collected_dynamic_variables (from Extract Variable nodes)
     if (body.call && body.call.collected_dynamic_variables) {
         const data = body.call.collected_dynamic_variables;
         
@@ -97,12 +95,9 @@ app.post('/post-call-webhook', (req, res) => {
         console.log('⚠️ No collected_dynamic_variables found');
     }
     
-    // FALLBACK SOURCE: custom_analysis_data (post-call analysis, always available)
-    // This catches any fields that might have been missed by Extract Variable nodes
     if (body.call_analysis && body.call_analysis.custom_analysis_data) {
         const fallback = body.call_analysis.custom_analysis_data;
         
-        // Only use fallback if primary source didn't have the value
         if (!name) name = getValue(fallback, 'name', 'Name', 'full_name', 'fullName');
         if (!postcode) postcode = getValue(fallback, 'postcode', 'Postcode', 'post_code', 'postCode');
         if (!phone) phone = getValue(fallback, 'phone', 'Phone', 'phone_number', 'phoneNumber', 'mobile');
@@ -140,6 +135,74 @@ app.post('/post-call-webhook', (req, res) => {
         res.status(200).send('OK');
     }
 });
+
+// ========== NEW CAL.COM ENDPOINTS ==========
+
+app.post('/cal/search-booking', async (req, res) => {
+    const { phone, email } = req.body;
+    
+    console.log('🔍 Searching Cal.com for booking:', { phone, email });
+    
+    try {
+        const response = await fetch('https://api.cal.com/v2/bookings', {
+            headers: {
+                'Authorization': `Bearer ${process.env.CAL_API_KEY}`,
+                'cal-api-version': '2024-08-13'
+            }
+        });
+        
+        const bookings = await response.json();
+        console.log('📅 Cal.com response:', bookings);
+        
+        const found = bookings.data?.find(b => 
+            b.attendees?.some(a => a.email === email || a.phone === phone)
+        );
+        
+        if (found) {
+            console.log('✅ Booking found:', found.uid);
+            res.json({ 
+                success: true, 
+                bookingUid: found.uid,
+                bookingDetails: found
+            });
+        } else {
+            console.log('❌ No booking found');
+            res.json({ success: false, error: 'No booking found for that phone number' });
+        }
+    } catch (error) {
+        console.error('❌ Search error:', error.message);
+        res.json({ success: false, error: error.message });
+    }
+});
+
+app.post('/cal/cancel-booking', async (req, res) => {
+    const { bookingUid, cancellationReason } = req.body;
+    
+    console.log('🗑️ Cancelling booking:', bookingUid);
+    
+    try {
+        const response = await fetch(`https://api.cal.com/v2/bookings/${bookingUid}/cancel`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${process.env.CAL_API_KEY}`,
+                'Content-Type': 'application/json',
+                'cal-api-version': '2024-08-13'
+            },
+            body: JSON.stringify({ 
+                cancellationReason: cancellationReason || 'Customer requested via phone' 
+            })
+        });
+        
+        const result = await response.json();
+        console.log('✅ Cancellation response:', result);
+        res.json({ success: true, result });
+    } catch (error) {
+        console.error('❌ Cancellation error:', error.message);
+        res.json({ success: false, error: error.message });
+    }
+});
+
+// ========== END NEW ENDPOINTS ==========
 
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
