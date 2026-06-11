@@ -262,7 +262,7 @@ app.post('/cal/book-appointment', async (req, res) => {
             body: JSON.stringify({
                 eventTypeId: 3605482,
                 start: time,
-                attendee: {
+                responses: {
                     name: name,
                     email: attendeeEmail,
                     phoneNumber: phone
