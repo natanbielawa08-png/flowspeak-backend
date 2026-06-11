@@ -136,7 +136,7 @@ app.post('/post-call-webhook', (req, res) => {
     }
 });
 
-// ========== NEW CAL.COM ENDPOINTS ==========
+// ========== CAL.COM ENDPOINTS ==========
 
 app.post('/cal/search-booking', async (req, res) => {
     const { phone, email } = req.body;
@@ -202,7 +202,46 @@ app.post('/cal/cancel-booking', async (req, res) => {
     }
 });
 
-// ========== END NEW ENDPOINTS ==========
+app.post('/cal/reschedule-booking', async (req, res) => {
+    const { bookingUid, newStartTime, reason } = req.body;
+    
+    console.log('📅 Rescheduling booking:', bookingUid);
+    console.log('🕒 New time:', newStartTime);
+    
+    try {
+        const response = await fetch(`https://api.cal.com/v2/bookings/${bookingUid}/reschedule`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${process.env.CAL_API_KEY}`,
+                'Content-Type': 'application/json',
+                'cal-api-version': '2024-08-13'
+            },
+            body: JSON.stringify({
+                start: newStartTime,
+                reason: reason || 'Customer requested reschedule via phone',
+                rescheduleReason: 'Customer requested change'
+            })
+        });
+        
+        const result = await response.json();
+        console.log('✅ Reschedule response:', result);
+        
+        if (response.ok) {
+            res.json({ 
+                success: true, 
+                newBookingUid: result.data?.uid,
+                result: result 
+            });
+        } else {
+            res.json({ success: false, error: result.error?.message || 'Reschedule failed' });
+        }
+    } catch (error) {
+        console.error('❌ Reschedule error:', error.message);
+        res.json({ success: false, error: error.message });
+    }
+});
+
+// ========== END CAL.COM ENDPOINTS ==========
 
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
