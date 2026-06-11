@@ -247,14 +247,10 @@ app.post('/cal/book-appointment', async (req, res) => {
     console.log('📅 Booking appointment for:', name);
     console.log('📞 Phone:', phone);
     console.log('🕒 Time:', time);
+    console.log('📧 Email:', email || 'auto-generated');
     
     try {
-        // Generate fake email from phone number and name
-        const cleanPhone = phone.replace(/\D/g, '');
-        const cleanName = name.toLowerCase().replace(/[^a-z]/g, '');
-        const attendeeEmail = `${cleanName}.${cleanPhone}@phone.flowspeak.ai`;
-        
-        console.log('📧 Generated email:', attendeeEmail);
+        const attendeeEmail = email || `${name.toLowerCase().replace(/\s/g, '')}@phonebooking.local`;
         
         const response = await fetch('https://api.cal.com/v2/bookings', {
             method: 'POST',
@@ -289,6 +285,51 @@ app.post('/cal/book-appointment', async (req, res) => {
     } catch (error) {
         console.error('❌ Booking error:', error.message);
         res.json({ success: false, error: error.message });
+    }
+});
+
+// ========== CAL.COM WEBHOOK ENDPOINT ==========
+
+app.post('/cal-webhook', async (req, res) => {
+    const body = req.body;
+    
+    console.log('🔔 CAL.COM WEBHOOK RECEIVED');
+    console.log('Event:', body.triggerEvent);
+    console.log('Booking data:', JSON.stringify(body, null, 2));
+    
+    // Respond immediately to acknowledge receipt
+    res.status(200).send('OK');
+    
+    // Process the webhook data asynchronously
+    if (body.triggerEvent === 'BOOKING_CREATED') {
+        const booking = body.payload;
+        const attendee = booking.attendees?.[0] || {};
+        
+        const name = attendee.name || 'Unknown';
+        const phone = attendee.phoneNumber || booking.responses?.phone || '?';
+        const email = attendee.email || '?';
+        const dateTime = booking.startTime || '?';
+        const bookingType = 'booking';
+        
+        console.log('=== New Booking Details ===');
+        console.log('Name:', name);
+        console.log('Phone:', phone);
+        console.log('Email:', email);
+        console.log('Date & Time:', dateTime);
+        
+        // Send SMS to contractor using your existing logic
+        if (phone !== '?' && CONTRACTOR_PHONE_NUMBER) {
+            try {
+                await twilioClient.messages.create({
+                    body: `New ${bookingType}!\nName: ${name}\nPhone: ${phone}\nDate & Time: ${dateTime}`,
+                    from: TWILIO_PHONE_NUMBER,
+                    to: CONTRACTOR_PHONE_NUMBER
+                });
+                console.log('✅ SMS sent from webhook');
+            } catch (err) {
+                console.error('❌ SMS error:', err.message);
+            }
+        }
     }
 });
 
