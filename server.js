@@ -270,17 +270,37 @@ app.post('/cal/reschedule-booking', async (req, res) => {
     }
 });
 
-// UPDATED BOOKING ENDPOINT - FIXED VERSION
+// UPDATED BOOKING ENDPOINT - TITLE REMOVED & TIME FIX ADDED
 app.post('/cal/book-appointment', async (req, res) => {
     const { name, phone, time } = req.body;
     
     console.log('📅 Booking appointment for:', name);
     console.log('📞 Phone:', phone);
-    console.log('🕒 Time:', time);
+    console.log('🕒 Time received:', time);
     
     // Generate a unique fake email
     const fakeEmail = `${name.toLowerCase().replace(/\s/g, '')}_${Date.now()}@phonebooking.local`;
     console.log('📧 Generated fake email:', fakeEmail);
+    
+    // Fix time format - ensure it's valid ISO string
+    let validTime = time;
+    if (!time || time === '') {
+        console.log('❌ No time provided');
+        return res.json({ success: false, error: 'No time provided' });
+    }
+    
+    // If time doesn't have Z or T, try to convert it
+    if (!time.includes('T') || !time.includes('Z')) {
+        try {
+            const parsedDate = new Date(time);
+            if (!isNaN(parsedDate.getTime())) {
+                validTime = parsedDate.toISOString();
+                console.log('🕒 Converted time to:', validTime);
+            }
+        } catch (e) {
+            console.log('⚠️ Could not parse time, using as-is');
+        }
+    }
     
     try {
         const response = await fetch('https://api.cal.com/v2/bookings', {
@@ -291,9 +311,8 @@ app.post('/cal/book-appointment', async (req, res) => {
                 'cal-api-version': '2024-08-13'
             },
             body: JSON.stringify({
-                start: time,
+                start: validTime,
                 eventTypeId: 6005228,
-                title: "Cleaning Appointment",
                 metadata: {},
                 attendee: {
                     name: name,
@@ -306,7 +325,7 @@ app.post('/cal/book-appointment', async (req, res) => {
         });
         
         const result = await response.json();
-        console.log('✅ Cal.com response:', result);
+        console.log('✅ Cal.com response:', JSON.stringify(result, null, 2));
         
         if (response.ok) {
             res.json({ 
@@ -316,7 +335,7 @@ app.post('/cal/book-appointment', async (req, res) => {
             });
         } else {
             console.log('❌ Cal.com error:', result);
-            res.json({ success: false, error: result.error?.message || 'Booking failed' });
+            res.json({ success: false, error: result.error?.message || JSON.stringify(result) });
         }
     } catch (error) {
         console.error('❌ Booking error:', error.message);
