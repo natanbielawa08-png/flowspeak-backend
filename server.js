@@ -270,17 +270,19 @@ app.post('/cal/reschedule-booking', async (req, res) => {
     }
 });
 
+// UPDATED BOOKING ENDPOINT - FIXED VERSION
 app.post('/cal/book-appointment', async (req, res) => {
-    const { name, phone, email, time } = req.body;
+    const { name, phone, time } = req.body;
     
     console.log('📅 Booking appointment for:', name);
     console.log('📞 Phone:', phone);
     console.log('🕒 Time:', time);
-    console.log('📧 Email:', email || 'auto-generated');
+    
+    // Generate a unique fake email
+    const fakeEmail = `${name.toLowerCase().replace(/\s/g, '')}_${Date.now()}@phonebooking.local`;
+    console.log('📧 Generated fake email:', fakeEmail);
     
     try {
-        const attendeeEmail = email || `${name.toLowerCase().replace(/\s/g, '')}@phonebooking.local`;
-        
         const response = await fetch('https://api.cal.com/v2/bookings', {
             method: 'POST',
             headers: {
@@ -289,26 +291,31 @@ app.post('/cal/book-appointment', async (req, res) => {
                 'cal-api-version': '2024-08-13'
             },
             body: JSON.stringify({
-                eventTypeId: 3605482,
                 start: time,
+                eventTypeId: 6005228,
+                title: "Cleaning Appointment",
+                metadata: {},
                 attendee: {
                     name: name,
-                    email: attendeeEmail,
-                    phoneNumber: phone
+                    email: fakeEmail,
+                    phoneNumber: phone,
+                    timeZone: "Europe/London",
+                    language: "en"
                 }
             })
         });
         
         const result = await response.json();
-        console.log('✅ Booking response:', result);
+        console.log('✅ Cal.com response:', result);
         
         if (response.ok) {
             res.json({ 
                 success: true, 
                 bookingUid: result.data?.uid,
-                result: result 
+                message: "Booking confirmed"
             });
         } else {
+            console.log('❌ Cal.com error:', result);
             res.json({ success: false, error: result.error?.message || 'Booking failed' });
         }
     } catch (error) {
