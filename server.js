@@ -281,11 +281,31 @@ app.post('/cal/cancel-booking', async (req, res) => {
     }
 });
 
+// CORRECTED RESCHEDULE ENDPOINT - Removed reason and rescheduleReason fields
 app.post('/cal/reschedule-booking', async (req, res) => {
-    const { bookingUid, newStartTime, reason } = req.body;
+    const { bookingUid, newStartTime } = req.body;
     
     console.log('📅 Rescheduling booking:', bookingUid);
     console.log('🕒 New time:', newStartTime);
+    
+    // Ensure time is valid ISO format
+    let validTime = newStartTime;
+    if (!newStartTime || newStartTime === '') {
+        console.log('❌ No new time provided');
+        return res.json({ success: false, error: 'No new time provided' });
+    }
+    
+    if (!newStartTime.includes('T') || !newStartTime.includes('Z')) {
+        try {
+            const parsedDate = new Date(newStartTime);
+            if (!isNaN(parsedDate.getTime())) {
+                validTime = parsedDate.toISOString();
+                console.log('🕒 Converted time to:', validTime);
+            }
+        } catch (e) {
+            console.log('⚠️ Could not parse time, using as-is');
+        }
+    }
     
     try {
         const response = await fetch(`https://api.cal.com/v2/bookings/${bookingUid}/reschedule`, {
@@ -296,9 +316,7 @@ app.post('/cal/reschedule-booking', async (req, res) => {
                 'cal-api-version': '2024-08-13'
             },
             body: JSON.stringify({
-                start: newStartTime,
-                reason: reason || 'Customer requested reschedule via phone',
-                rescheduleReason: 'Customer requested change'
+                start: validTime
             })
         });
         
@@ -309,9 +327,10 @@ app.post('/cal/reschedule-booking', async (req, res) => {
             res.json({ 
                 success: true, 
                 newBookingUid: result.data?.uid,
-                result: result 
+                message: "Appointment rescheduled successfully"
             });
         } else {
+            console.log('❌ Reschedule error:', result);
             res.json({ success: false, error: result.error?.message || 'Reschedule failed' });
         }
     } catch (error) {
