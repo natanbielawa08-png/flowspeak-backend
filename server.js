@@ -204,6 +204,56 @@ app.post('/cal/search-booking', async (req, res) => {
     }
 });
 
+// NEW ENDPOINT - Search all bookings by phone number
+app.post('/cal/search-bookings-by-phone', async (req, res) => {
+    const { phone } = req.body;
+    
+    console.log('🔍 Searching all bookings for phone:', phone);
+    
+    if (!phone) {
+        return res.json({ success: false, error: 'Phone number is required' });
+    }
+    
+    try {
+        const response = await fetch('https://api.cal.com/v2/bookings?limit=50', {
+            headers: {
+                'Authorization': `Bearer ${process.env.CAL_API_KEY}`,
+                'cal-api-version': '2024-08-13'
+            }
+        });
+        
+        const bookings = await response.json();
+        
+        // Normalize phone number for comparison (remove spaces, +, -, etc.)
+        const normalizePhone = (p) => p?.replace(/[\s\+\-\(\)]/g, '');
+        const normalizedSearchPhone = normalizePhone(phone);
+        
+        const matchingBookings = bookings.data?.filter(b => 
+            b.attendees?.some(a => normalizePhone(a.phoneNumber) === normalizedSearchPhone)
+        );
+        
+        if (matchingBookings && matchingBookings.length > 0) {
+            console.log(`✅ Found ${matchingBookings.length} booking(s)`);
+            res.json({ 
+                success: true, 
+                count: matchingBookings.length,
+                bookings: matchingBookings.map(b => ({
+                    bookingUid: b.uid,
+                    dateTime: b.start,
+                    status: b.status,
+                    attendeeName: b.attendees?.[0]?.name
+                }))
+            });
+        } else {
+            console.log('❌ No bookings found');
+            res.json({ success: false, error: 'No bookings found for that phone number' });
+        }
+    } catch (error) {
+        console.error('❌ Search error:', error.message);
+        res.json({ success: false, error: error.message });
+    }
+});
+
 app.post('/cal/cancel-booking', async (req, res) => {
     const { bookingUid, cancellationReason } = req.body;
     
