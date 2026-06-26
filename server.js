@@ -10,6 +10,9 @@ const twilioClient = twilio(
 const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
 const CONTRACTOR_PHONE_NUMBER = process.env.CONTRACTOR_PHONE_NUMBER;
 
+// Track processed calls to prevent duplicate SMS
+const processedCalls = new Set();
+
 app.use(express.json());
 
 app.get('/', (req, res) => {
@@ -74,8 +77,27 @@ app.post('/retell-webhook', (req, res) => {
 app.post('/post-call-webhook', (req, res) => {
     const body = req.body;
     
+    // DEDUPLICATION: Check if this call has already been processed
+    const callId = body.call?.call_id || body.call_id;
+    
+    if (callId) {
+        if (processedCalls.has(callId)) {
+            console.log(`⏭️ Skipping duplicate webhook for call: ${callId}`);
+            return res.status(200).send('OK');
+        }
+        // Mark as processed
+        processedCalls.add(callId);
+        // Clean up after 1 hour to prevent memory leak
+        setTimeout(() => {
+            processedCalls.delete(callId);
+        }, 3600000);
+    } else {
+        console.log('⚠️ No call_id found, processing anyway (no deduplication)');
+    }
+    
     console.log('🔔 WEBHOOK RECEIVED');
     console.log('Event type:', body.event);
+    if (callId) console.log('Call ID:', callId);
     
     let name = '', postcode = '', phone = '', cleanType = '', dateTime = '', bookingType = '';
     
