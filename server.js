@@ -78,23 +78,22 @@ app.post('/retell-webhook', (req, res) => {
 
 app.post('/post-call-webhook', async (req, res) => {
     const body = req.body;
-    
-    // DEDUPLICATION: Check if this call has already been processed
     const callId = body.call?.call_id || body.call_id;
-    
+    const eventType = body.event;
+
+    // FIX: Only process call_analyzed - that's the one with the real data
+    if (eventType !== 'call_analyzed') {
+        console.log(`⏭️ Ignoring event type: ${eventType} for call ${callId}`);
+        return res.status(200).send('OK');
+    }
+
     if (callId) {
         if (processedCalls.has(callId)) {
-            console.log(`⏭️ Skipping duplicate webhook for call: ${callId}`);
+            console.log(`⏭️ Skipping duplicate call_analyzed webhook for call: ${callId}`);
             return res.status(200).send('OK');
         }
-        // Mark as processed
         processedCalls.add(callId);
-        // Clean up after 1 hour to prevent memory leak
-        setTimeout(() => {
-            processedCalls.delete(callId);
-        }, 3600000);
-    } else {
-        console.log('⚠️ No call_id found, processing anyway (no deduplication)');
+        setTimeout(() => processedCalls.delete(callId), 3600000);
     }
     
     console.log('🔔 WEBHOOK RECEIVED');
