@@ -232,9 +232,10 @@ app.post('/post-call-webhook', async (req, res) => {
             actionText = 'booked';
         }
         
-        // Format the date/time nicely for the customer
+        // FIX: Better date handling - don't try to parse human-readable dates
         let formattedDateTime = dateTime || 'your requested time';
         try {
+            // Check if it's already in ISO format (contains T)
             if (dateTime && dateTime.includes('T')) {
                 const dateObj = new Date(dateTime);
                 formattedDateTime = dateObj.toLocaleString('en-GB', {
@@ -245,9 +246,14 @@ app.post('/post-call-webhook', async (req, res) => {
                     hour: '2-digit',
                     minute: '2-digit'
                 });
+            } else if (dateTime) {
+                // It's a human-readable date from Retell - use it as-is
+                formattedDateTime = dateTime;
+                console.log('📅 Using human-readable date as-is:', formattedDateTime);
             }
         } catch (e) {
-            console.log('⚠️ Could not format date/time, using raw value');
+            console.log('⚠️ Could not format date/time, using raw value:', dateTime);
+            formattedDateTime = dateTime || 'your requested time';
         }
         
         const customerMessage = `Hi ${customerName}, you've successfully ${actionText} a cleaning appointment with Magdalena Bielawa Cleaning Services for ${formattedDateTime}.\n\nAny questions? Please contact 07306666123`;
