@@ -3,6 +3,10 @@ const twilio = require('twilio');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+// FIX 1: Increase payload size limit to handle Retell webhooks (fixes 413 error)
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
 const twilioClient = twilio(
     process.env.TWILIO_ACCOUNT_SID,
     process.env.TWILIO_AUTH_TOKEN
@@ -12,8 +16,6 @@ const CONTRACTOR_PHONE_NUMBER = process.env.CONTRACTOR_PHONE_NUMBER;
 
 // Track processed calls to prevent duplicate SMS
 const processedCalls = new Set();
-
-app.use(express.json());
 
 app.get('/', (req, res) => {
     res.send('FlowSpeak backend is running!');
@@ -52,7 +54,7 @@ app.post('/send-sms', (req, res) => {
     
     if (phone && CONTRACTOR_PHONE_NUMBER) {
         twilioClient.messages.create({
-            body: `New ${bookingType || 'booking'}!\nName: ${name || '?'}\nPostcode: ${postcode || '?'}\nPhone: ${phone}\nClean type: ${cleanType || '?'}\nDate & Time: ${dateTime || '?'}`,
+            body: `New ${bookingType || 'booking'}!\nName: ${name || '?'}\nPostcode: ${postcode || 'Not provided'}\nPhone: ${phone}\nClean type: ${cleanType || '?'}\nDate & Time: ${dateTime || '?'}`,
             from: TWILIO_PHONE_NUMBER,
             to: CONTRACTOR_PHONE_NUMBER
         })
@@ -74,7 +76,7 @@ app.post('/retell-webhook', (req, res) => {
     res.status(200).send('OK');
 });
 
-app.post('/post-call-webhook', (req, res) => {
+app.post('/post-call-webhook', async (req, res) => {
     const body = req.body;
     
     // DEDUPLICATION: Check if this call has already been processed
@@ -104,8 +106,9 @@ app.post('/post-call-webhook', (req, res) => {
     if (body.call && body.call.collected_dynamic_variables) {
         const data = body.call.collected_dynamic_variables;
         
+        // FIX 2: Added more postcode variations
         name = getValue(data, 'name', 'Name', 'full_name', 'fullName');
-        postcode = getValue(data, 'postcode', 'Postcode', 'post_code', 'postCode', 'zip', 'postal_code');
+        postcode = getValue(data, 'postcode', 'Postcode', 'post_code', 'postCode', 'zip', 'postal_code', 'zipCode');
         phone = getValue(data, 'phone', 'Phone', 'phone_number', 'phoneNumber', 'mobile', 'Mobile');
         cleanType = getValue(data, 'cleanType', 'CleanType', 'clean_type', 'clean type', 'type_of_cleaning', 'cleaningType');
         dateTime = getValue(data, 'dateTime', 'DateTime', 'date_time', 'date time', 'date_and_time', 'date and time', 'appointment_time');
@@ -113,6 +116,7 @@ app.post('/post-call-webhook', (req, res) => {
         
         console.log('✅ Found in call.collected_dynamic_variables');
         console.log('📦 Keys received from Retell:', Object.keys(data));
+        console.log('📦 Postcode value:', postcode);
     } else {
         console.log('⚠️ No collected_dynamic_variables found');
     }
@@ -121,7 +125,8 @@ app.post('/post-call-webhook', (req, res) => {
         const fallback = body.call_analysis.custom_analysis_data;
         
         if (!name) name = getValue(fallback, 'name', 'Name', 'full_name', 'fullName');
-        if (!postcode) postcode = getValue(fallback, 'postcode', 'Postcode', 'post_code', 'postCode');
+        // FIX 2: Added more postcode variations to fallback too
+        if (!postcode) postcode = getValue(fallback, 'postcode', 'Postcode', 'post_code', 'postCode', 'zip', 'postal_code', 'zipCode');
         if (!phone) phone = getValue(fallback, 'phone', 'Phone', 'phone_number', 'phoneNumber', 'mobile');
         if (!cleanType) cleanType = getValue(fallback, 'cleanType', 'CleanType', 'clean_type', 'clean type', 'type_of_cleaning', 'type of cleaning');
         if (!dateTime) dateTime = getValue(fallback, 'dateTime', 'DateTime', 'date_time', 'date time', 'date_and_time', 'date and time');
@@ -138,28 +143,41 @@ app.post('/post-call-webhook', (req, res) => {
     console.log('Clean type:', cleanType);
     console.log('Date & Time:', dateTime);
     
-    // Send contractor SMS
+    // ===== SEND CONTRACTOR SMS =====
     if (phone && CONTRACTOR_PHONE_NUMBER) {
-        twilioClient.messages.create({
-            body: `New ${bookingType || 'booking'}!\nName: ${name || '?'}\nPostcode: ${postcode || '?'}\nPhone: ${phone}\nClean type: ${cleanType || '?'}\nDate & Time: ${dateTime || '?'}`,
-            from: TWILIO_PHONE_NUMBER,
-            to: CONTRACTOR_PHONE_NUMBER
-        })
-        .then(() => {
+        const contractorMessage = `New ${bookingType || 'booking'}!\nName: ${name || '?'}\nPostcode: ${postcode || 'Not provided'}\nPhone: ${phone}\nClean type: ${cleanType || '?'}\nDate & Time: ${dateTime || '?'}`;
+        
+        try {
+            await twilioClient.messages.create({
+                body: contractorMessage,
+                from: TWILIO_PHONE_NUMBER,
+                to: CONTRACTOR_PHONE_NUMBER
+            });
             console.log('✅ Contractor SMS sent');
-        })
-        .catch(err => {
+        } catch (err) {
             console.error('❌ Contractor SMS error:', err.message);
-        });
+        }
     } else {
         console.log('❌ Missing phone or contractor number');
     }
     
-    // Send customer confirmation SMS
-    if (phone && phone !== '?') {
+    // ===== SEND CUSTOMER SMS - FIX 3: IMPROVED VALIDATION =====
+    // Use the phone we extracted, or try to find it elsewhere in the body
+    const customerPhone = phone || getValue(body, 'phone', 'Phone', 'phone_number', 'phoneNumber', 'mobile', 'Mobile');
+    const customerName = name || 'Customer';
+    
+    // Better validation: check if we have a real phone number
+    const isValidPhone = customerPhone && 
+                         customerPhone !== '?' && 
+                         customerPhone !== 'undefined' && 
+                         customerPhone !== 'null' &&
+                         customerPhone.length > 5;
+    
+    if (isValidPhone) {
         let actionText = '';
         
-        if (bookingType === 'booking') {
+        // Handle empty bookingType (default to 'booking')
+        if (bookingType === 'booking' || bookingType === '' || !bookingType) {
             actionText = 'booked';
         } else if (bookingType === 'cancellation') {
             actionText = 'cancelled';
@@ -169,19 +187,42 @@ app.post('/post-call-webhook', (req, res) => {
             actionText = 'booked';
         }
         
-        const customerMessage = `You've successfully ${actionText} a booking with Magdalena Bielawa Cleaning Services!\n\nAny questions? Please contact 07306666123`;
+        // Format the date/time nicely for the customer
+        let formattedDateTime = dateTime || 'your requested time';
+        try {
+            if (dateTime && dateTime.includes('T')) {
+                const dateObj = new Date(dateTime);
+                formattedDateTime = dateObj.toLocaleString('en-GB', {
+                    weekday: 'short',
+                    day: '2-digit',
+                    month: 'short',
+                    year: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+            }
+        } catch (e) {
+            console.log('⚠️ Could not format date/time, using raw value');
+        }
         
-        twilioClient.messages.create({
-            body: customerMessage,
-            from: TWILIO_PHONE_NUMBER,
-            to: phone
-        })
-        .then(() => {
-            console.log('✅ Customer SMS sent to:', phone);
-        })
-        .catch(err => {
+        const customerMessage = `Hi ${customerName}, you've successfully ${actionText} a cleaning appointment with Magdalena Bielawa Cleaning Services for ${formattedDateTime}.\n\nAny questions? Please contact 07306666123`;
+        
+        console.log('📤 Sending customer SMS to:', customerPhone);
+        console.log('📝 Message:', customerMessage);
+        
+        try {
+            await twilioClient.messages.create({
+                body: customerMessage,
+                from: TWILIO_PHONE_NUMBER,
+                to: customerPhone
+            });
+            console.log('✅ Customer SMS sent to:', customerPhone);
+        } catch (err) {
             console.error('❌ Customer SMS error:', err.message);
-        });
+        }
+    } else {
+        console.log('⚠️ No valid customer phone number found, skipping customer SMS');
+        console.log('   Phone value was:', customerPhone);
     }
     
     res.status(200).send('OK');
@@ -361,13 +402,14 @@ app.post('/cal/reschedule-booking', async (req, res) => {
     }
 });
 
-// UPDATED BOOKING ENDPOINT - TITLE REMOVED & TIME FIX ADDED
+// FIX 4: UPDATED BOOKING ENDPOINT - Added postcode support
 app.post('/cal/book-appointment', async (req, res) => {
-    const { name, phone, time } = req.body;
+    const { name, phone, time, postcode } = req.body;
     
     console.log('📅 Booking appointment for:', name);
     console.log('📞 Phone:', phone);
     console.log('🕒 Time received:', time);
+    console.log('📍 Postcode:', postcode);
     
     // Generate a unique fake email
     const fakeEmail = `${name.toLowerCase().replace(/\s/g, '')}_${Date.now()}@phonebooking.local`;
@@ -404,7 +446,10 @@ app.post('/cal/book-appointment', async (req, res) => {
             body: JSON.stringify({
                 start: validTime,
                 eventTypeId: 6005228,
-                metadata: {},
+                metadata: {
+                    postcode: postcode || 'Not provided',  // FIX 4: Add postcode to metadata
+                    source: 'phone_call'
+                },
                 attendee: {
                     name: name,
                     email: fakeEmail,
@@ -456,18 +501,20 @@ app.post('/cal-webhook', async (req, res) => {
         const email = attendee.email || '?';
         const dateTime = booking.startTime || '?';
         const bookingType = 'booking';
+        const postcode = booking.metadata?.postcode || 'Not provided';
         
         console.log('=== New Booking Details ===');
         console.log('Name:', name);
         console.log('Phone:', phone);
         console.log('Email:', email);
         console.log('Date & Time:', dateTime);
+        console.log('Postcode:', postcode);
         
         // Send SMS to contractor using your existing logic
         if (phone !== '?' && CONTRACTOR_PHONE_NUMBER) {
             try {
                 await twilioClient.messages.create({
-                    body: `New ${bookingType}!\nName: ${name}\nPhone: ${phone}\nDate & Time: ${dateTime}`,
+                    body: `New ${bookingType}!\nName: ${name}\nPhone: ${phone}\nPostcode: ${postcode}\nDate & Time: ${dateTime}`,
                     from: TWILIO_PHONE_NUMBER,
                     to: CONTRACTOR_PHONE_NUMBER
                 });
