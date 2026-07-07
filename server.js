@@ -103,10 +103,10 @@ app.post('/post-call-webhook', async (req, res) => {
     
     let name = '', postcode = '', phone = '', cleanType = '', dateTime = '', bookingType = '';
     
+    // Check collected_dynamic_variables first
     if (body.call && body.call.collected_dynamic_variables) {
         const data = body.call.collected_dynamic_variables;
         
-        // FIX 2: Added more postcode variations
         name = getValue(data, 'name', 'Name', 'full_name', 'fullName');
         postcode = getValue(data, 'postcode', 'Postcode', 'post_code', 'postCode', 'zip', 'postal_code', 'zipCode');
         phone = getValue(data, 'phone', 'Phone', 'phone_number', 'phoneNumber', 'mobile', 'Mobile');
@@ -121,18 +121,66 @@ app.post('/post-call-webhook', async (req, res) => {
         console.log('⚠️ No collected_dynamic_variables found');
     }
     
+    // FIX: IMPROVED custom_analysis_data handling with better key mapping
     if (body.call_analysis && body.call_analysis.custom_analysis_data) {
         const fallback = body.call_analysis.custom_analysis_data;
         
-        if (!name) name = getValue(fallback, 'name', 'Name', 'full_name', 'fullName');
-        // FIX 2: Added more postcode variations to fallback too
-        if (!postcode) postcode = getValue(fallback, 'postcode', 'Postcode', 'post_code', 'postCode', 'zip', 'postal_code', 'zipCode');
-        if (!phone) phone = getValue(fallback, 'phone', 'Phone', 'phone_number', 'phoneNumber', 'mobile');
-        if (!cleanType) cleanType = getValue(fallback, 'cleanType', 'CleanType', 'clean_type', 'clean type', 'type_of_cleaning', 'type of cleaning');
-        if (!dateTime) dateTime = getValue(fallback, 'dateTime', 'DateTime', 'date_time', 'date time', 'date_and_time', 'date and time');
-        if (!bookingType) bookingType = getValue(fallback, 'bookingType', 'BookingType', 'booking_type', 'booking type', 'intent', 'call_type');
+        console.log('📦 Checking custom_analysis_data for data');
+        console.log('📦 Keys in custom_analysis_data:', Object.keys(fallback));
         
-        console.log('📦 Fallback keys from custom_analysis_data:', Object.keys(fallback));
+        // Map Retell's keys to our standard keys
+        const mappedData = {};
+        
+        // Map all possible key variations
+        for (const [key, value] of Object.entries(fallback)) {
+            const lowerKey = key.toLowerCase().replace(/[_\s]/g, '');
+            
+            // Map the keys
+            if (lowerKey === 'name' || lowerKey === 'fullname') {
+                mappedData.name = value;
+            } else if (lowerKey === 'postcode' || lowerKey === 'postalcode' || lowerKey === 'zip' || lowerKey === 'zipcode') {
+                mappedData.postcode = value;
+            } else if (lowerKey === 'phone' || lowerKey === 'phonenumber' || lowerKey === 'phone_number' || lowerKey === 'mobile' || lowerKey === 'mobilenumber') {
+                mappedData.phone = value;
+            } else if (lowerKey === 'cleantype' || lowerKey === 'cleaningtype' || lowerKey === 'typeofcleaning' || lowerKey === 'typeofcleaning') {
+                mappedData.cleanType = value;
+            } else if (lowerKey === 'datetime' || lowerKey === 'dateandtime' || lowerKey === 'date_time' || lowerKey === 'appointmenttime' || lowerKey === 'appointment_time') {
+                mappedData.dateTime = value;
+            } else if (lowerKey === 'bookingtype' || lowerKey === 'bookingtype' || lowerKey === 'intent' || lowerKey === 'calltype' || lowerKey === 'call_type') {
+                mappedData.bookingType = value;
+            }
+            
+            // Also try exact key matches
+            if (key === 'name') mappedData.name = value;
+            if (key === 'postcode') mappedData.postcode = value;
+            if (key === 'phone_number') mappedData.phone = value;
+            if (key === 'cleanType') mappedData.cleanType = value;
+            if (key === 'dateTime') mappedData.dateTime = value;
+            if (key === 'bookingType') mappedData.bookingType = value;
+        }
+        
+        // Apply mapped data (only if not already set)
+        if (!name && mappedData.name) name = mappedData.name;
+        if (!postcode && mappedData.postcode) postcode = mappedData.postcode;
+        if (!phone && mappedData.phone) phone = mappedData.phone;
+        if (!cleanType && mappedData.cleanType) cleanType = mappedData.cleanType;
+        if (!dateTime && mappedData.dateTime) dateTime = mappedData.dateTime;
+        if (!bookingType && mappedData.bookingType) bookingType = mappedData.bookingType;
+        
+        // Also try the original getValue with more specific patterns as fallback
+        if (!postcode) postcode = getValue(fallback, 'postcode', 'post_code', 'postal_code', 'zip');
+        if (!dateTime) dateTime = getValue(fallback, 'dateTime', 'date_time', 'appointment_time', 'appointmentTime');
+        if (!cleanType) cleanType = getValue(fallback, 'cleanType', 'clean_type', 'cleaningType', 'cleaning_type');
+        if (!bookingType) bookingType = getValue(fallback, 'bookingType', 'booking_type', 'intent', 'call_type');
+        
+        console.log('📦 Extracted from custom_analysis_data:', {
+            name,
+            postcode,
+            phone,
+            cleanType,
+            dateTime,
+            bookingType
+        });
     }
     
     console.log('=== Extracted Data ===');
@@ -161,8 +209,7 @@ app.post('/post-call-webhook', async (req, res) => {
         console.log('❌ Missing phone or contractor number');
     }
     
-    // ===== SEND CUSTOMER SMS - FIX 3: IMPROVED VALIDATION =====
-    // Use the phone we extracted, or try to find it elsewhere in the body
+    // ===== SEND CUSTOMER SMS =====
     const customerPhone = phone || getValue(body, 'phone', 'Phone', 'phone_number', 'phoneNumber', 'mobile', 'Mobile');
     const customerName = name || 'Customer';
     
@@ -176,7 +223,6 @@ app.post('/post-call-webhook', async (req, res) => {
     if (isValidPhone) {
         let actionText = '';
         
-        // Handle empty bookingType (default to 'booking')
         if (bookingType === 'booking' || bookingType === '' || !bookingType) {
             actionText = 'booked';
         } else if (bookingType === 'cancellation') {
@@ -402,7 +448,7 @@ app.post('/cal/reschedule-booking', async (req, res) => {
     }
 });
 
-// FIX 4: UPDATED BOOKING ENDPOINT - Added postcode support
+// UPDATED BOOKING ENDPOINT - Added postcode support
 app.post('/cal/book-appointment', async (req, res) => {
     const { name, phone, time, postcode } = req.body;
     
@@ -447,7 +493,7 @@ app.post('/cal/book-appointment', async (req, res) => {
                 start: validTime,
                 eventTypeId: 6005228,
                 metadata: {
-                    postcode: postcode || 'Not provided',  // FIX 4: Add postcode to metadata
+                    postcode: postcode || 'Not provided',
                     source: 'phone_call'
                 },
                 attendee: {
