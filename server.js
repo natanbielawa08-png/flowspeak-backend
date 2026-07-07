@@ -232,11 +232,13 @@ app.post('/post-call-webhook', async (req, res) => {
             actionText = 'booked';
         }
         
-        // FIX: Better date handling - don't try to parse human-readable dates
+        // FIX: Proper date handling - check for ISO pattern, not just "T"
         let formattedDateTime = dateTime || 'your requested time';
         try {
-            // Check if it's already in ISO format (contains T)
-            if (dateTime && dateTime.includes('T')) {
+            // Check if it's an ISO timestamp (YYYY-MM-DDTHH:MM)
+            const isISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(dateTime || '');
+            
+            if (isISO) {
                 const dateObj = new Date(dateTime);
                 formattedDateTime = dateObj.toLocaleString('en-GB', {
                     weekday: 'short',
@@ -246,6 +248,7 @@ app.post('/post-call-webhook', async (req, res) => {
                     hour: '2-digit',
                     minute: '2-digit'
                 });
+                console.log('📅 Formatted ISO date:', formattedDateTime);
             } else if (dateTime) {
                 // It's a human-readable date from Retell - use it as-is
                 formattedDateTime = dateTime;
