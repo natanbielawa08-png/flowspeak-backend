@@ -282,6 +282,331 @@ app.post('/post-call-webhook', async (req, res) => {
     res.status(200).send('OK');
 });
 
+// ========== SMS CONVERSATION ENDPOINT ==========
+
+// Track SMS conversation states (in-memory - consider Redis/DB for production)
+const smsConversations = new Map();
+
+// Clean up old conversations after 24 hours
+setInterval(() => {
+    const now = Date.now();
+    for (const [key, state] of smsConversations) {
+        if (now - state.lastUpdated > 86400000) { // 24 hours
+            smsConversations.delete(key);
+        }
+    }
+}, 3600000); // Check every hour
+
+function getSmsConversation(from, to) {
+    const key = `${from}:${to}`;
+    if (!smsConversations.has(key)) {
+        smsConversations.set(key, {
+            from,
+            to,
+            step: 'greeting',
+            collectedData: {},
+            lastUpdated: Date.now()
+        });
+    }
+    return smsConversations.get(key);
+}
+
+// Helper to get base URL for internal API calls
+function getBaseUrl(req) {
+    return `${req.protocol}://${req.get('host')}`;
+}
+
+app.post('/sms-webhook', async (req, res) => {
+    const { From, To, Body } = req.body;
+    
+    console.log('📱 SMS received');
+    console.log('   From:', From);
+    console.log('   To:', To);
+    console.log('   Body:', Body);
+    
+    // Get or create conversation state
+    const conversation = getSmsConversation(From, To);
+    conversation.lastUpdated = Date.now();
+    
+    // Step 1: Determine what the customer wants
+    const message = Body.trim().toLowerCase();
+    
+    // Check for cancel/reschedule intent first
+    if (message.includes('cancel') || message.includes('cancellation')) {
+        await handleCancelSms(req, From, To, conversation);
+        return res.status(200).send('OK');
+    }
+    
+    if (message.includes('reschedule') || message.includes('change') || message.includes('move')) {
+        await handleRescheduleSms(req, From, To, conversation);
+        return res.status(200).send('OK');
+    }
+    
+    // Check if booking is complete
+    if (conversation.step === 'booking_complete') {
+        // Customer is sending a new message after booking - restart or handle new request
+        conversation.step = 'greeting';
+        conversation.collectedData = {};
+    }
+    
+    // Handle booking flow
+    await handleBookingSms(req, From, To, Body, conversation);
+    
+    res.status(200).send('OK');
+});
+
+// SMS Handlers
+async function handleBookingSms(req, from, to, body, conversation) {
+    const message = body.trim();
+    const data = conversation.collectedData;
+    const step = conversation.step;
+    
+    console.log(`📋 SMS step: ${step}`);
+    
+    switch (step) {
+        case 'greeting':
+            // Customer said something like "Hi I'd like to book"
+            await twilioClient.messages.create({
+                body: "👋 Hi! I'd be happy to help you book a cleaning. What's your full name?",
+                from: TWILIO_PHONE_NUMBER,
+                to: from
+            });
+            conversation.step = 'collecting_name';
+            break;
+            
+        case 'collecting_name':
+            data.name = message;
+            await twilioClient.messages.create({
+                body: `Thanks ${data.name}! What's your postcode?`,
+                from: TWILIO_PHONE_NUMBER,
+                to: from
+            });
+            conversation.step = 'collecting_postcode';
+            break;
+            
+        case 'collecting_postcode':
+            data.postcode = message;
+            await twilioClient.messages.create({
+                body: "Great! What type of cleaning do you need? (deep clean, regular clean, end of tenancy)",
+                from: TWILIO_PHONE_NUMBER,
+                to: from
+            });
+            conversation.step = 'collecting_clean_type';
+            break;
+            
+        case 'collecting_clean_type':
+            data.cleanType = message;
+            await twilioClient.messages.create({
+                body: "Got it! When would you like the appointment? Please give me a date and time (e.g., tomorrow at 2 PM, or Friday 10 AM)",
+                from: TWILIO_PHONE_NUMBER,
+                to: from
+            });
+            conversation.step = 'collecting_date_time';
+            break;
+            
+        case 'collecting_date_time':
+            data.dateTime = message;
+            data.bookingType = 'booking';
+            
+            // Extract phone from the "from" number
+            const phone = from;
+            const name = data.name;
+            const postcode = data.postcode;
+            
+            // Create the booking
+            try {
+                // Convert human-readable date to ISO (simple attempt)
+                let isoTime = null;
+                try {
+                    // Try to parse natural language date
+                    const dateObj = new Date(message);
+                    if (!isNaN(dateObj.getTime())) {
+                        isoTime = dateObj.toISOString();
+                    }
+                } catch (e) {
+                    console.log('⚠️ Could not parse date from SMS:', message);
+                }
+                
+                // If we couldn't parse the date, ask again
+                if (!isoTime) {
+                    await twilioClient.messages.create({
+                        body: "I couldn't understand that date/time. Could you please give it in a clearer format? (e.g., Friday at 2 PM, or 2026-07-09T14:00:00Z)",
+                        from: TWILIO_PHONE_NUMBER,
+                        to: from
+                    });
+                    return;
+                }
+                
+                const baseUrl = getBaseUrl(req);
+                
+                // Call your booking endpoint
+                const bookingResponse = await fetch(`${baseUrl}/cal/book-appointment`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: name,
+                        phone: phone,
+                        postcode: postcode,
+                        time: isoTime
+                    })
+                });
+                
+                const bookingResult = await bookingResponse.json();
+                
+                if (bookingResult.success) {
+                    // Send confirmation to customer
+                    const dateObj = new Date(isoTime);
+                    const formattedDate = dateObj.toLocaleString('en-GB', {
+                        weekday: 'short',
+                        day: '2-digit',
+                        month: 'short',
+                        year: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                    });
+                    
+                    await twilioClient.messages.create({
+                        body: `✅ Booking confirmed!\n\nName: ${name}\nPostcode: ${postcode}\nClean type: ${data.cleanType}\nDate & Time: ${formattedDate}\n\n📱 To cancel or reschedule, just reply "cancel" or "reschedule"`,
+                        from: TWILIO_PHONE_NUMBER,
+                        to: from
+                    });
+                    
+                    conversation.step = 'booking_complete';
+                    console.log('✅ SMS booking complete for:', phone);
+                    
+                    // Also send contractor notification
+                    const contractorMessage = `New SMS booking!\nName: ${name}\nPhone: ${phone}\nPostcode: ${postcode}\nClean type: ${data.cleanType}\nDate & Time: ${formattedDate}`;
+                    await twilioClient.messages.create({
+                        body: contractorMessage,
+                        from: TWILIO_PHONE_NUMBER,
+                        to: CONTRACTOR_PHONE_NUMBER
+                    });
+                    
+                } else {
+                    await twilioClient.messages.create({
+                        body: `❌ Sorry, I couldn't book that time. Please try again with a different time.`,
+                        from: TWILIO_PHONE_NUMBER,
+                        to: from
+                    });
+                }
+                
+            } catch (error) {
+                console.error('❌ SMS booking error:', error.message);
+                await twilioClient.messages.create({
+                    body: "❌ Something went wrong. Please try again or call us at 07306666123",
+                    from: TWILIO_PHONE_NUMBER,
+                    to: from
+                });
+            }
+            break;
+            
+        default:
+            // Unknown state - reset
+            conversation.step = 'greeting';
+            conversation.collectedData = {};
+            await twilioClient.messages.create({
+                body: "Hi! Would you like to book a cleaning? Just reply 'yes' or tell me what you need.",
+                from: TWILIO_PHONE_NUMBER,
+                to: from
+            });
+    }
+}
+
+async function handleCancelSms(req, from, to, conversation) {
+    // Search for their booking by phone number
+    const phone = from;
+    const baseUrl = getBaseUrl(req);
+    
+    try {
+        const searchResponse = await fetch(`${baseUrl}/cal/search-bookings-by-phone`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ phone })
+        });
+        
+        const searchResult = await searchResponse.json();
+        
+        if (!searchResult.success || searchResult.count === 0) {
+            await twilioClient.messages.create({
+                body: "I couldn't find any upcoming bookings for this phone number. If you need help, please call us at 07306666123",
+                from: TWILIO_PHONE_NUMBER,
+                to: from
+            });
+            return;
+        }
+        
+        // For now, just list bookings (in production, let them choose)
+        const bookings = searchResult.bookings;
+        if (bookings.length === 1) {
+            // Cancel the only booking
+            const bookingUid = bookings[0].bookingUid;
+            const cancelResponse = await fetch(`${baseUrl}/cal/cancel-booking`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    bookingUid,
+                    cancellationReason: 'Customer requested via SMS'
+                })
+            });
+            
+            const cancelResult = await cancelResponse.json();
+            
+            if (cancelResult.success) {
+                await twilioClient.messages.create({
+                    body: "✅ Your booking has been cancelled. If you need to book again, just let me know!",
+                    from: TWILIO_PHONE_NUMBER,
+                    to: from
+                });
+            } else {
+                await twilioClient.messages.create({
+                    body: "❌ I couldn't cancel your booking. Please call us at 07306666123 for help.",
+                    from: TWILIO_PHONE_NUMBER,
+                    to: from
+                });
+            }
+        } else {
+            // Multiple bookings - list them (simplified)
+            let listMessage = "I found multiple bookings:\n";
+            bookings.forEach((b, i) => {
+                const date = new Date(b.dateTime);
+                const formatted = date.toLocaleString('en-GB', {
+                    weekday: 'short',
+                    day: '2-digit',
+                    month: 'short',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+                listMessage += `${i+1}. ${formatted}\n`;
+            });
+            listMessage += "\nFor now, please call us at 07306666123 to choose which one to cancel.";
+            
+            await twilioClient.messages.create({
+                body: listMessage,
+                from: TWILIO_PHONE_NUMBER,
+                to: from
+            });
+        }
+    } catch (error) {
+        console.error('❌ SMS cancel error:', error.message);
+        await twilioClient.messages.create({
+            body: "❌ Something went wrong. Please call us at 07306666123 for help.",
+            from: TWILIO_PHONE_NUMBER,
+            to: from
+        });
+    }
+}
+
+async function handleRescheduleSms(req, from, to, conversation) {
+    // For Phase 1, suggest calling for reschedule
+    await twilioClient.messages.create({
+        body: "To reschedule, please call us at 07306666123 and we'll find a new time for you.",
+        from: TWILIO_PHONE_NUMBER,
+        to: from
+    });
+}
+
+// ========== END SMS CONVERSATION ==========
+
 // ========== CAL.COM ENDPOINTS ==========
 
 app.post('/cal/search-booking', async (req, res) => {
