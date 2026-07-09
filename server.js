@@ -1,6 +1,6 @@
 const express = require('express');
 const twilio = require('twilio');
-const chrono = require('chrono-node'); // <-- ADDED THIS
+const chrono = require('chrono-node');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -82,7 +82,6 @@ app.post('/post-call-webhook', async (req, res) => {
     const callId = body.call?.call_id || body.call_id;
     const eventType = body.event;
 
-    // FIX: Only process call_analyzed - that's the one with the real data
     if (eventType !== 'call_analyzed') {
         console.log(`⏭️ Ignoring event type: ${eventType} for call ${callId}`);
         return res.status(200).send('OK');
@@ -103,7 +102,6 @@ app.post('/post-call-webhook', async (req, res) => {
     
     let name = '', postcode = '', phone = '', cleanType = '', dateTime = '', bookingType = '';
     
-    // Check collected_dynamic_variables first
     if (body.call && body.call.collected_dynamic_variables) {
         const data = body.call.collected_dynamic_variables;
         
@@ -121,21 +119,17 @@ app.post('/post-call-webhook', async (req, res) => {
         console.log('⚠️ No collected_dynamic_variables found');
     }
     
-    // FIX: IMPROVED custom_analysis_data handling with better key mapping
     if (body.call_analysis && body.call_analysis.custom_analysis_data) {
         const fallback = body.call_analysis.custom_analysis_data;
         
         console.log('📦 Checking custom_analysis_data for data');
         console.log('📦 Keys in custom_analysis_data:', Object.keys(fallback));
         
-        // Map Retell's keys to our standard keys
         const mappedData = {};
         
-        // Map all possible key variations
         for (const [key, value] of Object.entries(fallback)) {
             const lowerKey = key.toLowerCase().replace(/[_\s]/g, '');
             
-            // Map the keys
             if (lowerKey === 'name' || lowerKey === 'fullname') {
                 mappedData.name = value;
             } else if (lowerKey === 'postcode' || lowerKey === 'postalcode' || lowerKey === 'zip' || lowerKey === 'zipcode') {
@@ -150,7 +144,6 @@ app.post('/post-call-webhook', async (req, res) => {
                 mappedData.bookingType = value;
             }
             
-            // Also try exact key matches
             if (key === 'name') mappedData.name = value;
             if (key === 'postcode') mappedData.postcode = value;
             if (key === 'phone_number') mappedData.phone = value;
@@ -159,7 +152,6 @@ app.post('/post-call-webhook', async (req, res) => {
             if (key === 'bookingType') mappedData.bookingType = value;
         }
         
-        // Apply mapped data (only if not already set)
         if (!name && mappedData.name) name = mappedData.name;
         if (!postcode && mappedData.postcode) postcode = mappedData.postcode;
         if (!phone && mappedData.phone) phone = mappedData.phone;
@@ -167,7 +159,6 @@ app.post('/post-call-webhook', async (req, res) => {
         if (!dateTime && mappedData.dateTime) dateTime = mappedData.dateTime;
         if (!bookingType && mappedData.bookingType) bookingType = mappedData.bookingType;
         
-        // Also try the original getValue with more specific patterns as fallback
         if (!postcode) postcode = getValue(fallback, 'postcode', 'post_code', 'postal_code', 'zip');
         if (!dateTime) dateTime = getValue(fallback, 'dateTime', 'date_time', 'appointment_time', 'appointmentTime');
         if (!cleanType) cleanType = getValue(fallback, 'cleanType', 'clean_type', 'cleaningType', 'cleaning_type');
@@ -191,7 +182,6 @@ app.post('/post-call-webhook', async (req, res) => {
     console.log('Clean type:', cleanType);
     console.log('Date & Time:', dateTime);
     
-    // ===== SEND CONTRACTOR SMS =====
     if (phone && CONTRACTOR_PHONE_NUMBER) {
         const contractorMessage = `New ${bookingType || 'booking'}!\nName: ${name || '?'}\nPostcode: ${postcode || 'Not provided'}\nPhone: ${phone}\nClean type: ${cleanType || '?'}\nDate & Time: ${dateTime || '?'}`;
         
@@ -209,11 +199,9 @@ app.post('/post-call-webhook', async (req, res) => {
         console.log('❌ Missing phone or contractor number');
     }
     
-    // ===== SEND CUSTOMER SMS =====
     const customerPhone = phone || getValue(body, 'phone', 'Phone', 'phone_number', 'phoneNumber', 'mobile', 'Mobile');
     const customerName = name || 'Customer';
     
-    // Better validation: check if we have a real phone number
     const isValidPhone = customerPhone && 
                          customerPhone !== '?' && 
                          customerPhone !== 'undefined' && 
@@ -233,10 +221,8 @@ app.post('/post-call-webhook', async (req, res) => {
             actionText = 'booked';
         }
         
-        // FIX: Proper date handling - check for ISO pattern, not just "T"
         let formattedDateTime = dateTime || 'your requested time';
         try {
-            // Check if it's an ISO timestamp (YYYY-MM-DDTHH:MM)
             const isISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(dateTime || '');
             
             if (isISO) {
@@ -251,7 +237,6 @@ app.post('/post-call-webhook', async (req, res) => {
                 });
                 console.log('📅 Formatted ISO date:', formattedDateTime);
             } else if (dateTime) {
-                // It's a human-readable date from Retell - use it as-is
                 formattedDateTime = dateTime;
                 console.log('📅 Using human-readable date as-is:', formattedDateTime);
             }
@@ -285,18 +270,16 @@ app.post('/post-call-webhook', async (req, res) => {
 
 // ========== SMS CONVERSATION ENDPOINT ==========
 
-// Track SMS conversation states (in-memory - consider Redis/DB for production)
 const smsConversations = new Map();
 
-// Clean up old conversations after 24 hours
 setInterval(() => {
     const now = Date.now();
     for (const [key, state] of smsConversations) {
-        if (now - state.lastUpdated > 86400000) { // 24 hours
+        if (now - state.lastUpdated > 86400000) {
             smsConversations.delete(key);
         }
     }
-}, 3600000); // Check every hour
+}, 3600000);
 
 function getSmsConversation(from, to) {
     const key = `${from}:${to}`;
@@ -312,7 +295,6 @@ function getSmsConversation(from, to) {
     return smsConversations.get(key);
 }
 
-// Helper to get base URL for internal API calls
 function getBaseUrl(req) {
     return `${req.protocol}://${req.get('host')}`;
 }
@@ -325,14 +307,11 @@ app.post('/sms-webhook', async (req, res) => {
     console.log('   To:', To);
     console.log('   Body:', Body);
     
-    // Get or create conversation state
     const conversation = getSmsConversation(From, To);
     conversation.lastUpdated = Date.now();
     
-    // Step 1: Determine what the customer wants
     const message = Body.trim().toLowerCase();
     
-    // Check for cancel/reschedule intent first
     if (message.includes('cancel') || message.includes('cancellation')) {
         await handleCancelSms(req, From, To, conversation);
         return res.status(200).send('OK');
@@ -343,14 +322,11 @@ app.post('/sms-webhook', async (req, res) => {
         return res.status(200).send('OK');
     }
     
-    // Check if booking is complete
     if (conversation.step === 'booking_complete') {
-        // Customer is sending a new message after booking - restart or handle new request
         conversation.step = 'greeting';
         conversation.collectedData = {};
     }
     
-    // Handle booking flow
     await handleBookingSms(req, From, To, Body, conversation);
     
     res.status(200).send('OK');
@@ -366,7 +342,6 @@ async function handleBookingSms(req, from, to, body, conversation) {
     
     switch (step) {
         case 'greeting':
-            // Customer said something like "Hi I'd like to book"
             await twilioClient.messages.create({
                 body: "👋 Hi! I'd be happy to help you book a cleaning. What's your full name?",
                 from: TWILIO_PHONE_NUMBER,
@@ -409,17 +384,59 @@ async function handleBookingSms(req, from, to, body, conversation) {
             data.dateTime = message;
             data.bookingType = 'booking';
             
-            // Extract phone from the "from" number
             const phone = from;
             const name = data.name;
             const postcode = data.postcode;
             
-            // Create the booking
             try {
-                // CHANGED: Use chrono-node for natural language date parsing
+                // Check if this is a question about availability
+                if (message.toLowerCase().includes('available') || 
+                    message.toLowerCase().includes('free') || 
+                    message.toLowerCase().includes('opening') ||
+                    message.toLowerCase().includes('what times')) {
+                    
+                    await twilioClient.messages.create({
+                        body: "I can check availability for you! What date are you looking for? Please give me a specific date and time (e.g., Friday at 2pm).",
+                        from: TWILIO_PHONE_NUMBER,
+                        to: from
+                    });
+                    return;
+                }
+                
+                // Special: Handle "closest available" or "nearest" requests
+                if (message.toLowerCase().includes('closest') || 
+                    message.toLowerCase().includes('nearest') || 
+                    message.toLowerCase().includes('soonest') ||
+                    message.toLowerCase().includes('earliest')) {
+                    
+                    const suggestions = [
+                        new Date(Date.now() + 86400000 * 2).toLocaleString('en-GB', { 
+                            weekday: 'short', 
+                            day: '2-digit', 
+                            month: 'short', 
+                            hour: '2-digit', 
+                            minute: '2-digit' 
+                        }),
+                        new Date(Date.now() + 86400000 * 3).toLocaleString('en-GB', { 
+                            weekday: 'short', 
+                            day: '2-digit', 
+                            month: 'short', 
+                            hour: '2-digit', 
+                            minute: '2-digit' 
+                        })
+                    ];
+                    
+                    await twilioClient.messages.create({
+                        body: `I can help find the nearest available time. Would you prefer one of these?\n\n1️⃣ ${suggestions[0]}\n2️⃣ ${suggestions[1]}\n\nOr tell me a specific time that works for you.`,
+                        from: TWILIO_PHONE_NUMBER,
+                        to: from
+                    });
+                    return;
+                }
+                
+                // Parse date with chrono-node
                 let isoTime = null;
                 try {
-                    // chrono-node parses natural language dates like "Friday at 2pm"
                     const parsedDate = chrono.parseDate(message, new Date(), { 
                         timezone: 'Europe/London' 
                     });
@@ -434,10 +451,21 @@ async function handleBookingSms(req, from, to, body, conversation) {
                     console.log('⚠️ Date parsing error:', e.message);
                 }
                 
-                // If we couldn't parse the date, ask again
                 if (!isoTime) {
                     await twilioClient.messages.create({
                         body: "I couldn't understand that date/time. Could you please give it in a clearer format? (e.g., Friday at 2 PM, tomorrow at 10am, or 2026-07-09T14:00:00Z)",
+                        from: TWILIO_PHONE_NUMBER,
+                        to: from
+                    });
+                    return;
+                }
+                
+                // Check if the time is in the past
+                const now = new Date();
+                const requestedDate = new Date(isoTime);
+                if (requestedDate < now) {
+                    await twilioClient.messages.create({
+                        body: "❌ That time is in the past. Could you please choose a future date and time? (e.g., tomorrow at 2 PM)",
                         from: TWILIO_PHONE_NUMBER,
                         to: from
                     });
@@ -459,9 +487,9 @@ async function handleBookingSms(req, from, to, body, conversation) {
                 });
                 
                 const bookingResult = await bookingResponse.json();
+                console.log('📥 Booking result:', JSON.stringify(bookingResult, null, 2));
                 
                 if (bookingResult.success) {
-                    // Send confirmation to customer
                     const dateObj = new Date(isoTime);
                     const formattedDate = dateObj.toLocaleString('en-GB', {
                         weekday: 'short',
@@ -481,7 +509,6 @@ async function handleBookingSms(req, from, to, body, conversation) {
                     conversation.step = 'booking_complete';
                     console.log('✅ SMS booking complete for:', phone);
                     
-                    // Also send contractor notification
                     const contractorMessage = `New SMS booking!\nName: ${name}\nPhone: ${phone}\nPostcode: ${postcode}\nClean type: ${data.cleanType}\nDate & Time: ${formattedDate}`;
                     await twilioClient.messages.create({
                         body: contractorMessage,
@@ -490,11 +517,35 @@ async function handleBookingSms(req, from, to, body, conversation) {
                     });
                     
                 } else {
-                    await twilioClient.messages.create({
-                        body: `❌ Sorry, I couldn't book that time. Please try again with a different time.`,
-                        from: TWILIO_PHONE_NUMBER,
-                        to: from
-                    });
+                    // Handle specific Cal.com errors
+                    const errorMessage = bookingResult.error?.message || '';
+                    console.log('❌ Cal.com error:', errorMessage);
+                    
+                    if (errorMessage.includes('already has booking') || errorMessage.includes('not available')) {
+                        await twilioClient.messages.create({
+                            body: "❌ That time is already booked or you have a booking at that time. Could you please suggest a different time? (e.g., Friday at 4pm)",
+                            from: TWILIO_PHONE_NUMBER,
+                            to: from
+                        });
+                    } else if (errorMessage.includes('past')) {
+                        await twilioClient.messages.create({
+                            body: "❌ That time is in the past. Could you please choose a future date and time? (e.g., tomorrow at 2 PM)",
+                            from: TWILIO_PHONE_NUMBER,
+                            to: from
+                        });
+                    } else if (errorMessage.includes('working hours') || errorMessage.includes('outside')) {
+                        await twilioClient.messages.create({
+                            body: "❌ Our working hours are 9am to 5pm, Monday to Friday. Could you please choose a time within these hours?",
+                            from: TWILIO_PHONE_NUMBER,
+                            to: from
+                        });
+                    } else {
+                        await twilioClient.messages.create({
+                            body: "❌ Sorry, I couldn't book that time. Please try a different date and time.",
+                            from: TWILIO_PHONE_NUMBER,
+                            to: from
+                        });
+                    }
                 }
                 
             } catch (error) {
@@ -508,7 +559,6 @@ async function handleBookingSms(req, from, to, body, conversation) {
             break;
             
         default:
-            // Unknown state - reset
             conversation.step = 'greeting';
             conversation.collectedData = {};
             await twilioClient.messages.create({
@@ -520,7 +570,6 @@ async function handleBookingSms(req, from, to, body, conversation) {
 }
 
 async function handleCancelSms(req, from, to, conversation) {
-    // Search for their booking by phone number
     const phone = from;
     const baseUrl = getBaseUrl(req);
     
@@ -542,10 +591,8 @@ async function handleCancelSms(req, from, to, conversation) {
             return;
         }
         
-        // For now, just list bookings (in production, let them choose)
         const bookings = searchResult.bookings;
         if (bookings.length === 1) {
-            // Cancel the only booking
             const bookingUid = bookings[0].bookingUid;
             const cancelResponse = await fetch(`${baseUrl}/cal/cancel-booking`, {
                 method: 'POST',
@@ -572,7 +619,6 @@ async function handleCancelSms(req, from, to, conversation) {
                 });
             }
         } else {
-            // Multiple bookings - list them (simplified)
             let listMessage = "I found multiple bookings:\n";
             bookings.forEach((b, i) => {
                 const date = new Date(b.dateTime);
@@ -604,7 +650,6 @@ async function handleCancelSms(req, from, to, conversation) {
 }
 
 async function handleRescheduleSms(req, from, to, conversation) {
-    // For Phase 1, suggest calling for reschedule
     await twilioClient.messages.create({
         body: "To reschedule, please call us at 07306666123 and we'll find a new time for you.",
         from: TWILIO_PHONE_NUMBER,
@@ -653,7 +698,6 @@ app.post('/cal/search-booking', async (req, res) => {
     }
 });
 
-// NEW ENDPOINT - Search all bookings by phone number
 app.post('/cal/search-bookings-by-phone', async (req, res) => {
     const { phone } = req.body;
     
@@ -673,7 +717,6 @@ app.post('/cal/search-bookings-by-phone', async (req, res) => {
         
         const bookings = await response.json();
         
-        // Normalize phone number for comparison (remove spaces, +, -, etc.)
         const normalizePhone = (p) => p?.replace(/[\s\+\-\(\)]/g, '');
         const normalizedSearchPhone = normalizePhone(phone);
         
@@ -730,14 +773,12 @@ app.post('/cal/cancel-booking', async (req, res) => {
     }
 });
 
-// CORRECTED RESCHEDULE ENDPOINT - Removed reason and rescheduleReason fields
 app.post('/cal/reschedule-booking', async (req, res) => {
     const { bookingUid, newStartTime } = req.body;
     
     console.log('📅 Rescheduling booking:', bookingUid);
     console.log('🕒 New time:', newStartTime);
     
-    // Ensure time is valid ISO format
     let validTime = newStartTime;
     if (!newStartTime || newStartTime === '') {
         console.log('❌ No new time provided');
@@ -788,7 +829,6 @@ app.post('/cal/reschedule-booking', async (req, res) => {
     }
 });
 
-// UPDATED BOOKING ENDPOINT - Added postcode support
 app.post('/cal/book-appointment', async (req, res) => {
     const { name, phone, time, postcode } = req.body;
     
@@ -797,18 +837,15 @@ app.post('/cal/book-appointment', async (req, res) => {
     console.log('🕒 Time received:', time);
     console.log('📍 Postcode:', postcode);
     
-    // Generate a unique fake email
     const fakeEmail = `${name.toLowerCase().replace(/\s/g, '')}_${Date.now()}@phonebooking.local`;
     console.log('📧 Generated fake email:', fakeEmail);
     
-    // Fix time format - ensure it's valid ISO string
     let validTime = time;
     if (!time || time === '') {
         console.log('❌ No time provided');
         return res.json({ success: false, error: 'No time provided' });
     }
     
-    // If time doesn't have Z or T, try to convert it
     if (!time.includes('T') || !time.includes('Z')) {
         try {
             const parsedDate = new Date(time);
@@ -874,10 +911,8 @@ app.post('/cal-webhook', async (req, res) => {
     console.log('Event:', body.triggerEvent);
     console.log('Booking data:', JSON.stringify(body, null, 2));
     
-    // Respond immediately to acknowledge receipt
     res.status(200).send('OK');
     
-    // Process the webhook data asynchronously
     if (body.triggerEvent === 'BOOKING_CREATED') {
         const booking = body.payload;
         const attendee = booking.attendees?.[0] || {};
@@ -896,7 +931,6 @@ app.post('/cal-webhook', async (req, res) => {
         console.log('Date & Time:', dateTime);
         console.log('Postcode:', postcode);
         
-        // Send SMS to contractor using your existing logic
         if (phone !== '?' && CONTRACTOR_PHONE_NUMBER) {
             try {
                 await twilioClient.messages.create({
