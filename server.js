@@ -268,7 +268,7 @@ app.post('/post-call-webhook', async (req, res) => {
     res.status(200).send('OK');
 });
 
-// ========== SMS CONVERSATION ENDPOINT ==========
+// ========== SMS CONVERSATION ==========
 
 const smsConversations = new Map();
 
@@ -299,40 +299,8 @@ function getBaseUrl(req) {
     return `${req.protocol}://${req.get('host')}`;
 }
 
-app.post('/sms-webhook', async (req, res) => {
-    const { From, To, Body } = req.body;
-    
-    console.log('📱 SMS received');
-    console.log('   From:', From);
-    console.log('   To:', To);
-    console.log('   Body:', Body);
-    
-    const conversation = getSmsConversation(From, To);
-    conversation.lastUpdated = Date.now();
-    
-    const message = Body.trim().toLowerCase();
-    
-    if (message.includes('cancel') || message.includes('cancellation')) {
-        await handleCancelSms(req, From, To, conversation);
-        return res.status(200).send('OK');
-    }
-    
-    if (message.includes('reschedule') || message.includes('change') || message.includes('move')) {
-        await handleRescheduleSms(req, From, To, conversation);
-        return res.status(200).send('OK');
-    }
-    
-    if (conversation.step === 'booking_complete') {
-        conversation.step = 'greeting';
-        conversation.collectedData = {};
-    }
-    
-    await handleBookingSms(req, From, To, Body, conversation);
-    
-    res.status(200).send('OK');
-});
+// ====== SMS HANDLER FUNCTIONS (MOVED HERE) ======
 
-// SMS Handlers
 async function handleBookingSms(req, from, to, body, conversation) {
     const message = body.trim();
     const data = conversation.collectedData;
@@ -657,7 +625,40 @@ async function handleRescheduleSms(req, from, to, conversation) {
     });
 }
 
-// ========== END SMS CONVERSATION ==========
+// ====== SMS WEBHOOK ROUTE (NOW AFTER FUNCTIONS) ======
+
+app.post('/sms-webhook', async (req, res) => {
+    const { From, To, Body } = req.body;
+    
+    console.log('📱 SMS received');
+    console.log('   From:', From);
+    console.log('   To:', To);
+    console.log('   Body:', Body);
+    
+    const conversation = getSmsConversation(From, To);
+    conversation.lastUpdated = Date.now();
+    
+    const message = Body.trim().toLowerCase();
+    
+    if (message.includes('cancel') || message.includes('cancellation')) {
+        await handleCancelSms(req, From, To, conversation);
+        return res.status(200).send('OK');
+    }
+    
+    if (message.includes('reschedule') || message.includes('change') || message.includes('move')) {
+        await handleRescheduleSms(req, From, To, conversation);
+        return res.status(200).send('OK');
+    }
+    
+    if (conversation.step === 'booking_complete') {
+        conversation.step = 'greeting';
+        conversation.collectedData = {};
+    }
+    
+    await handleBookingSms(req, From, To, Body, conversation);
+    
+    res.status(200).send('OK');
+});
 
 // ========== CAL.COM ENDPOINTS ==========
 
