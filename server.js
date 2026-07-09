@@ -1,5 +1,6 @@
 const express = require('express');
 const twilio = require('twilio');
+const chrono = require('chrono-node'); // <-- ADDED THIS
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -415,22 +416,28 @@ async function handleBookingSms(req, from, to, body, conversation) {
             
             // Create the booking
             try {
-                // Convert human-readable date to ISO (simple attempt)
+                // CHANGED: Use chrono-node for natural language date parsing
                 let isoTime = null;
                 try {
-                    // Try to parse natural language date
-                    const dateObj = new Date(message);
-                    if (!isNaN(dateObj.getTime())) {
-                        isoTime = dateObj.toISOString();
+                    // chrono-node parses natural language dates like "Friday at 2pm"
+                    const parsedDate = chrono.parseDate(message, new Date(), { 
+                        timezone: 'Europe/London' 
+                    });
+                    
+                    if (parsedDate) {
+                        isoTime = parsedDate.toISOString();
+                        console.log('✅ Parsed date:', message, '→', isoTime);
+                    } else {
+                        console.log('⚠️ Could not parse date from SMS:', message);
                     }
                 } catch (e) {
-                    console.log('⚠️ Could not parse date from SMS:', message);
+                    console.log('⚠️ Date parsing error:', e.message);
                 }
                 
                 // If we couldn't parse the date, ask again
                 if (!isoTime) {
                     await twilioClient.messages.create({
-                        body: "I couldn't understand that date/time. Could you please give it in a clearer format? (e.g., Friday at 2 PM, or 2026-07-09T14:00:00Z)",
+                        body: "I couldn't understand that date/time. Could you please give it in a clearer format? (e.g., Friday at 2 PM, tomorrow at 10am, or 2026-07-09T14:00:00Z)",
                         from: TWILIO_PHONE_NUMBER,
                         to: from
                     });
