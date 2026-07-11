@@ -13,6 +13,18 @@ const twilioClient = twilio(
     process.env.TWILIO_AUTH_TOKEN
 );
 const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
+
+// ===== ADDED: Helper to determine riskCheck setting =====
+// Only disable riskCheck in non-production environments
+function getTwilioOptions(messageData) {
+    const options = { ...messageData };
+    if (process.env.NODE_ENV !== 'production') {
+        options.riskCheck = 'disable';
+    }
+    return options;
+}
+// ===== END ADDED =====
+
 const CONTRACTOR_PHONE_NUMBER = process.env.CONTRACTOR_PHONE_NUMBER;
 
 // Track processed calls to prevent duplicate SMS
@@ -54,11 +66,12 @@ app.post('/send-sms', (req, res) => {
     console.log('Date & Time:', dateTime);
     
     if (phone && CONTRACTOR_PHONE_NUMBER) {
-        twilioClient.messages.create({
+        // CHANGED: Wrapped in getTwilioOptions
+        twilioClient.messages.create(getTwilioOptions({
             body: `New ${bookingType || 'booking'}!\nName: ${name || '?'}\nPostcode: ${postcode || 'Not provided'}\nPhone: ${phone}\nClean type: ${cleanType || '?'}\nDate & Time: ${dateTime || '?'}`,
             from: TWILIO_PHONE_NUMBER,
             to: CONTRACTOR_PHONE_NUMBER
-        })
+        }))
         .then(() => {
             console.log('✅ SMS sent');
             res.json({ success: true });
@@ -186,11 +199,12 @@ app.post('/post-call-webhook', async (req, res) => {
         const contractorMessage = `New ${bookingType || 'booking'}!\nName: ${name || '?'}\nPostcode: ${postcode || 'Not provided'}\nPhone: ${phone}\nClean type: ${cleanType || '?'}\nDate & Time: ${dateTime || '?'}`;
         
         try {
-            await twilioClient.messages.create({
+            // CHANGED: Wrapped in getTwilioOptions
+            await twilioClient.messages.create(getTwilioOptions({
                 body: contractorMessage,
                 from: TWILIO_PHONE_NUMBER,
                 to: CONTRACTOR_PHONE_NUMBER
-            });
+            }));
             console.log('✅ Contractor SMS sent');
         } catch (err) {
             console.error('❌ Contractor SMS error:', err.message);
@@ -251,11 +265,12 @@ app.post('/post-call-webhook', async (req, res) => {
         console.log('📝 Message:', customerMessage);
         
         try {
-            await twilioClient.messages.create({
+            // CHANGED: Wrapped in getTwilioOptions
+            await twilioClient.messages.create(getTwilioOptions({
                 body: customerMessage,
                 from: TWILIO_PHONE_NUMBER,
                 to: customerPhone
-            });
+            }));
             console.log('✅ Customer SMS sent to:', customerPhone);
         } catch (err) {
             console.error('❌ Customer SMS error:', err.message);
@@ -310,41 +325,45 @@ async function handleBookingSms(req, from, to, body, conversation) {
     
     switch (step) {
         case 'greeting':
-            await twilioClient.messages.create({
+            // CHANGED: Wrapped in getTwilioOptions
+            await twilioClient.messages.create(getTwilioOptions({
                 body: "👋 Hi! I'd be happy to help you book a cleaning. What's your full name?",
                 from: TWILIO_PHONE_NUMBER,
                 to: from
-            });
+            }));
             conversation.step = 'collecting_name';
             break;
             
         case 'collecting_name':
             data.name = message;
-            await twilioClient.messages.create({
+            // CHANGED: Wrapped in getTwilioOptions
+            await twilioClient.messages.create(getTwilioOptions({
                 body: `Thanks ${data.name}! What's your postcode?`,
                 from: TWILIO_PHONE_NUMBER,
                 to: from
-            });
+            }));
             conversation.step = 'collecting_postcode';
             break;
             
         case 'collecting_postcode':
             data.postcode = message;
-            await twilioClient.messages.create({
+            // CHANGED: Wrapped in getTwilioOptions
+            await twilioClient.messages.create(getTwilioOptions({
                 body: "Great! What type of cleaning do you need? (deep clean, regular clean, end of tenancy)",
                 from: TWILIO_PHONE_NUMBER,
                 to: from
-            });
+            }));
             conversation.step = 'collecting_clean_type';
             break;
             
         case 'collecting_clean_type':
             data.cleanType = message;
-            await twilioClient.messages.create({
+            // CHANGED: Wrapped in getTwilioOptions
+            await twilioClient.messages.create(getTwilioOptions({
                 body: "Got it! When would you like the appointment? Please give me a date and time (e.g., tomorrow at 2 PM, or Friday 10 AM)",
                 from: TWILIO_PHONE_NUMBER,
                 to: from
-            });
+            }));
             conversation.step = 'collecting_date_time';
             break;
             
@@ -363,11 +382,12 @@ async function handleBookingSms(req, from, to, body, conversation) {
                     message.toLowerCase().includes('opening') ||
                     message.toLowerCase().includes('what times')) {
                     
-                    await twilioClient.messages.create({
+                    // CHANGED: Wrapped in getTwilioOptions
+                    await twilioClient.messages.create(getTwilioOptions({
                         body: "I can check availability for you! What date are you looking for? Please give me a specific date and time (e.g., Friday at 2pm).",
                         from: TWILIO_PHONE_NUMBER,
                         to: from
-                    });
+                    }));
                     return;
                 }
                 
@@ -394,11 +414,12 @@ async function handleBookingSms(req, from, to, body, conversation) {
                         })
                     ];
                     
-                    await twilioClient.messages.create({
+                    // CHANGED: Wrapped in getTwilioOptions
+                    await twilioClient.messages.create(getTwilioOptions({
                         body: `I can help find the nearest available time. Would you prefer one of these?\n\n1️⃣ ${suggestions[0]}\n2️⃣ ${suggestions[1]}\n\nOr tell me a specific time that works for you.`,
                         from: TWILIO_PHONE_NUMBER,
                         to: from
-                    });
+                    }));
                     return;
                 }
                 
@@ -420,11 +441,12 @@ async function handleBookingSms(req, from, to, body, conversation) {
                 }
                 
                 if (!isoTime) {
-                    await twilioClient.messages.create({
+                    // CHANGED: Wrapped in getTwilioOptions
+                    await twilioClient.messages.create(getTwilioOptions({
                         body: "I couldn't understand that date/time. Could you please give it in a clearer format? (e.g., Friday at 2 PM, tomorrow at 10am, or 2026-07-09T14:00:00Z)",
                         from: TWILIO_PHONE_NUMBER,
                         to: from
-                    });
+                    }));
                     return;
                 }
                 
@@ -432,11 +454,12 @@ async function handleBookingSms(req, from, to, body, conversation) {
                 const now = new Date();
                 const requestedDate = new Date(isoTime);
                 if (requestedDate < now) {
-                    await twilioClient.messages.create({
+                    // CHANGED: Wrapped in getTwilioOptions
+                    await twilioClient.messages.create(getTwilioOptions({
                         body: "❌ That time is in the past. Could you please choose a future date and time? (e.g., tomorrow at 2 PM)",
                         from: TWILIO_PHONE_NUMBER,
                         to: from
-                    });
+                    }));
                     return;
                 }
                 
@@ -468,21 +491,23 @@ async function handleBookingSms(req, from, to, body, conversation) {
                         minute: '2-digit'
                     });
                     
-                    await twilioClient.messages.create({
+                    // CHANGED: Wrapped in getTwilioOptions
+                    await twilioClient.messages.create(getTwilioOptions({
                         body: `✅ Booking confirmed!\n\nName: ${name}\nPostcode: ${postcode}\nClean type: ${data.cleanType}\nDate & Time: ${formattedDate}\n\n📱 To cancel or reschedule, just reply "cancel" or "reschedule"`,
                         from: TWILIO_PHONE_NUMBER,
                         to: from
-                    });
+                    }));
                     
                     conversation.step = 'booking_complete';
                     console.log('✅ SMS booking complete for:', phone);
                     
                     const contractorMessage = `New SMS booking!\nName: ${name}\nPhone: ${phone}\nPostcode: ${postcode}\nClean type: ${data.cleanType}\nDate & Time: ${formattedDate}`;
-                    await twilioClient.messages.create({
+                    // CHANGED: Wrapped in getTwilioOptions
+                    await twilioClient.messages.create(getTwilioOptions({
                         body: contractorMessage,
                         from: TWILIO_PHONE_NUMBER,
                         to: CONTRACTOR_PHONE_NUMBER
-                    });
+                    }));
                     
                 } else {
                     // Handle specific Cal.com errors
@@ -490,50 +515,56 @@ async function handleBookingSms(req, from, to, body, conversation) {
                     console.log('❌ Cal.com error:', errorMessage);
                     
                     if (errorMessage.includes('already has booking') || errorMessage.includes('not available')) {
-                        await twilioClient.messages.create({
+                        // CHANGED: Wrapped in getTwilioOptions
+                        await twilioClient.messages.create(getTwilioOptions({
                             body: "❌ That time is already booked or you have a booking at that time. Could you please suggest a different time? (e.g., Friday at 4pm)",
                             from: TWILIO_PHONE_NUMBER,
                             to: from
-                        });
+                        }));
                     } else if (errorMessage.includes('past')) {
-                        await twilioClient.messages.create({
+                        // CHANGED: Wrapped in getTwilioOptions
+                        await twilioClient.messages.create(getTwilioOptions({
                             body: "❌ That time is in the past. Could you please choose a future date and time? (e.g., tomorrow at 2 PM)",
                             from: TWILIO_PHONE_NUMBER,
                             to: from
-                        });
+                        }));
                     } else if (errorMessage.includes('working hours') || errorMessage.includes('outside')) {
-                        await twilioClient.messages.create({
+                        // CHANGED: Wrapped in getTwilioOptions
+                        await twilioClient.messages.create(getTwilioOptions({
                             body: "❌ Our working hours are 9am to 5pm, Monday to Friday. Could you please choose a time within these hours?",
                             from: TWILIO_PHONE_NUMBER,
                             to: from
-                        });
+                        }));
                     } else {
-                        await twilioClient.messages.create({
+                        // CHANGED: Wrapped in getTwilioOptions
+                        await twilioClient.messages.create(getTwilioOptions({
                             body: "❌ Sorry, I couldn't book that time. Please try a different date and time.",
                             from: TWILIO_PHONE_NUMBER,
                             to: from
-                        });
+                        }));
                     }
                 }
                 
             } catch (error) {
                 console.error('❌ SMS booking error:', error.message);
-                await twilioClient.messages.create({
+                // CHANGED: Wrapped in getTwilioOptions
+                await twilioClient.messages.create(getTwilioOptions({
                     body: "❌ Something went wrong. Please try again or call us at 07306666123",
                     from: TWILIO_PHONE_NUMBER,
                     to: from
-                });
+                }));
             }
             break;
             
         default:
             conversation.step = 'greeting';
             conversation.collectedData = {};
-            await twilioClient.messages.create({
+            // CHANGED: Wrapped in getTwilioOptions
+            await twilioClient.messages.create(getTwilioOptions({
                 body: "Hi! Would you like to book a cleaning? Just reply 'yes' or tell me what you need.",
                 from: TWILIO_PHONE_NUMBER,
                 to: from
-            });
+            }));
     }
 }
 
@@ -551,11 +582,12 @@ async function handleCancelSms(req, from, to, conversation) {
         const searchResult = await searchResponse.json();
         
         if (!searchResult.success || searchResult.count === 0) {
-            await twilioClient.messages.create({
+            // CHANGED: Wrapped in getTwilioOptions
+            await twilioClient.messages.create(getTwilioOptions({
                 body: "I couldn't find any upcoming bookings for this phone number. If you need help, please call us at 07306666123",
                 from: TWILIO_PHONE_NUMBER,
                 to: from
-            });
+            }));
             return;
         }
         
@@ -574,17 +606,19 @@ async function handleCancelSms(req, from, to, conversation) {
             const cancelResult = await cancelResponse.json();
             
             if (cancelResult.success) {
-                await twilioClient.messages.create({
+                // CHANGED: Wrapped in getTwilioOptions
+                await twilioClient.messages.create(getTwilioOptions({
                     body: "✅ Your booking has been cancelled. If you need to book again, just let me know!",
                     from: TWILIO_PHONE_NUMBER,
                     to: from
-                });
+                }));
             } else {
-                await twilioClient.messages.create({
+                // CHANGED: Wrapped in getTwilioOptions
+                await twilioClient.messages.create(getTwilioOptions({
                     body: "❌ I couldn't cancel your booking. Please call us at 07306666123 for help.",
                     from: TWILIO_PHONE_NUMBER,
                     to: from
-                });
+                }));
             }
         } else {
             let listMessage = "I found multiple bookings:\n";
@@ -601,28 +635,31 @@ async function handleCancelSms(req, from, to, conversation) {
             });
             listMessage += "\nFor now, please call us at 07306666123 to choose which one to cancel.";
             
-            await twilioClient.messages.create({
+            // CHANGED: Wrapped in getTwilioOptions
+            await twilioClient.messages.create(getTwilioOptions({
                 body: listMessage,
                 from: TWILIO_PHONE_NUMBER,
                 to: from
-            });
+            }));
         }
     } catch (error) {
         console.error('❌ SMS cancel error:', error.message);
-        await twilioClient.messages.create({
+        // CHANGED: Wrapped in getTwilioOptions
+        await twilioClient.messages.create(getTwilioOptions({
             body: "❌ Something went wrong. Please call us at 07306666123 for help.",
             from: TWILIO_PHONE_NUMBER,
             to: from
-        });
+        }));
     }
 }
 
 async function handleRescheduleSms(req, from, to, conversation) {
-    await twilioClient.messages.create({
+    // CHANGED: Wrapped in getTwilioOptions
+    await twilioClient.messages.create(getTwilioOptions({
         body: "To reschedule, please call us at 07306666123 and we'll find a new time for you.",
         from: TWILIO_PHONE_NUMBER,
         to: from
-    });
+    }));
 }
 
 // ====== SMS WEBHOOK ROUTE (NOW AFTER FUNCTIONS) ======
@@ -934,11 +971,12 @@ app.post('/cal-webhook', async (req, res) => {
         
         if (phone !== '?' && CONTRACTOR_PHONE_NUMBER) {
             try {
-                await twilioClient.messages.create({
+                // CHANGED: Wrapped in getTwilioOptions
+                await twilioClient.messages.create(getTwilioOptions({
                     body: `New ${bookingType}!\nName: ${name}\nPhone: ${phone}\nPostcode: ${postcode}\nDate & Time: ${dateTime}`,
                     from: TWILIO_PHONE_NUMBER,
                     to: CONTRACTOR_PHONE_NUMBER
-                });
+                }));
                 console.log('✅ SMS sent from webhook');
             } catch (err) {
                 console.error('❌ SMS error:', err.message);
