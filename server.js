@@ -55,7 +55,7 @@ function getValue(obj, ...possibleNames) {
 }
 
 app.post('/send-sms', (req, res) => {
-    const { name, postcode, phone, cleanType, dateTime, bookingType } = req.body;
+    const { name, postcode, phone, cleanType, dateTime, bookingType, street, houseNumber } = req.body;
     
     console.log('=== SMS Request ===');
     console.log('Booking Type:', bookingType);
@@ -64,11 +64,19 @@ app.post('/send-sms', (req, res) => {
     console.log('Phone:', phone);
     console.log('Clean type:', cleanType);
     console.log('Date & Time:', dateTime);
+    console.log('Street:', street);
+    console.log('House/Flat Number:', houseNumber);
     
     if (phone && CONTRACTOR_PHONE_NUMBER) {
-        // CHANGED: Wrapped in getTwilioOptions
+        // Build address string if street and house number are available
+        let addressStr = '';
+        if (street || houseNumber) {
+            addressStr = `\nAddress: ${houseNumber || ''} ${street || ''}`.trim();
+        }
+        
+        // CHANGED: Wrapped in getTwilioOptions and added address fields
         twilioClient.messages.create(getTwilioOptions({
-            body: `New ${bookingType || 'booking'}!\nName: ${name || '?'}\nPostcode: ${postcode || 'Not provided'}\nPhone: ${phone}\nClean type: ${cleanType || '?'}\nDate & Time: ${dateTime || '?'}`,
+            body: `New ${bookingType || 'booking'}!\nName: ${name || '?'}\nPostcode: ${postcode || 'Not provided'}\nPhone: ${phone}\nClean type: ${cleanType || '?'}\nDate & Time: ${dateTime || '?'}${addressStr}`,
             from: TWILIO_PHONE_NUMBER,
             to: CONTRACTOR_PHONE_NUMBER
         }))
@@ -114,6 +122,7 @@ app.post('/post-call-webhook', async (req, res) => {
     if (callId) console.log('Call ID:', callId);
     
     let name = '', postcode = '', phone = '', cleanType = '', dateTime = '', bookingType = '';
+    let street = '', houseNumber = ''; // ADDED: New fields for address
     
     if (body.call && body.call.collected_dynamic_variables) {
         const data = body.call.collected_dynamic_variables;
@@ -124,10 +133,14 @@ app.post('/post-call-webhook', async (req, res) => {
         cleanType = getValue(data, 'cleanType', 'CleanType', 'clean_type', 'clean type', 'type_of_cleaning', 'cleaningType');
         dateTime = getValue(data, 'dateTime', 'DateTime', 'date_time', 'date time', 'date_and_time', 'date and time', 'appointment_time');
         bookingType = getValue(data, 'bookingType', 'BookingType', 'booking_type', 'booking type', 'intent', 'call_type', 'callType');
+        street = getValue(data, 'street', 'Street', 'street_name', 'streetName', 'address', 'Address');
+        houseNumber = getValue(data, 'houseNumber', 'HouseNumber', 'house_number', 'house_no', 'houseNo', 'house', 'House', 'number', 'flat', 'Flat', 'apartment', 'Apartment');
         
         console.log('✅ Found in call.collected_dynamic_variables');
         console.log('📦 Keys received from Retell:', Object.keys(data));
         console.log('📦 Postcode value:', postcode);
+        console.log('📦 Street:', street);
+        console.log('📦 House/Flat Number:', houseNumber);
     } else {
         console.log('⚠️ No collected_dynamic_variables found');
     }
@@ -155,6 +168,10 @@ app.post('/post-call-webhook', async (req, res) => {
                 mappedData.dateTime = value;
             } else if (lowerKey === 'bookingtype' || lowerKey === 'bookingtype' || lowerKey === 'intent' || lowerKey === 'calltype' || lowerKey === 'call_type') {
                 mappedData.bookingType = value;
+            } else if (lowerKey === 'street' || lowerKey === 'streetname' || lowerKey === 'address') {
+                mappedData.street = value;
+            } else if (lowerKey === 'housenumber' || lowerKey === 'houseno' || lowerKey === 'house' || lowerKey === 'number' || lowerKey === 'flat' || lowerKey === 'apartment') {
+                mappedData.houseNumber = value;
             }
             
             if (key === 'name') mappedData.name = value;
@@ -163,6 +180,8 @@ app.post('/post-call-webhook', async (req, res) => {
             if (key === 'cleanType') mappedData.cleanType = value;
             if (key === 'dateTime') mappedData.dateTime = value;
             if (key === 'bookingType') mappedData.bookingType = value;
+            if (key === 'street') mappedData.street = value;
+            if (key === 'houseNumber') mappedData.houseNumber = value;
         }
         
         if (!name && mappedData.name) name = mappedData.name;
@@ -171,11 +190,15 @@ app.post('/post-call-webhook', async (req, res) => {
         if (!cleanType && mappedData.cleanType) cleanType = mappedData.cleanType;
         if (!dateTime && mappedData.dateTime) dateTime = mappedData.dateTime;
         if (!bookingType && mappedData.bookingType) bookingType = mappedData.bookingType;
+        if (!street && mappedData.street) street = mappedData.street;
+        if (!houseNumber && mappedData.houseNumber) houseNumber = mappedData.houseNumber;
         
         if (!postcode) postcode = getValue(fallback, 'postcode', 'post_code', 'postal_code', 'zip');
         if (!dateTime) dateTime = getValue(fallback, 'dateTime', 'date_time', 'appointment_time', 'appointmentTime');
         if (!cleanType) cleanType = getValue(fallback, 'cleanType', 'clean_type', 'cleaningType', 'cleaning_type');
         if (!bookingType) bookingType = getValue(fallback, 'bookingType', 'booking_type', 'intent', 'call_type');
+        if (!street) street = getValue(fallback, 'street', 'street_name', 'streetName', 'address', 'Address');
+        if (!houseNumber) houseNumber = getValue(fallback, 'houseNumber', 'house_number', 'house_no', 'houseNo', 'house', 'number', 'flat', 'apartment');
         
         console.log('📦 Extracted from custom_analysis_data:', {
             name,
@@ -183,7 +206,9 @@ app.post('/post-call-webhook', async (req, res) => {
             phone,
             cleanType,
             dateTime,
-            bookingType
+            bookingType,
+            street,
+            houseNumber
         });
     }
     
@@ -194,9 +219,17 @@ app.post('/post-call-webhook', async (req, res) => {
     console.log('Phone:', phone);
     console.log('Clean type:', cleanType);
     console.log('Date & Time:', dateTime);
+    console.log('Street:', street);
+    console.log('House/Flat Number:', houseNumber);
     
     if (phone && CONTRACTOR_PHONE_NUMBER) {
-        const contractorMessage = `New ${bookingType || 'booking'}!\nName: ${name || '?'}\nPostcode: ${postcode || 'Not provided'}\nPhone: ${phone}\nClean type: ${cleanType || '?'}\nDate & Time: ${dateTime || '?'}`;
+        // Build address string if street and house number are available
+        let addressStr = '';
+        if (street || houseNumber) {
+            addressStr = `\nAddress: ${houseNumber || ''} ${street || ''}`.trim();
+        }
+        
+        const contractorMessage = `New ${bookingType || 'booking'}!\nName: ${name || '?'}\nPostcode: ${postcode || 'Not provided'}\nPhone: ${phone}\nClean type: ${cleanType || '?'}\nDate & Time: ${dateTime || '?'}${addressStr}`;
         
         try {
             // CHANGED: Wrapped in getTwilioOptions
@@ -473,7 +506,9 @@ async function handleBookingSms(req, from, to, body, conversation) {
                         name: name,
                         phone: phone,
                         postcode: postcode,
-                        time: isoTime
+                        time: isoTime,
+                        street: data.street || '',
+                        houseNumber: data.houseNumber || ''
                     })
                 });
                 
@@ -501,7 +536,13 @@ async function handleBookingSms(req, from, to, body, conversation) {
                     conversation.step = 'booking_complete';
                     console.log('✅ SMS booking complete for:', phone);
                     
-                    const contractorMessage = `New SMS booking!\nName: ${name}\nPhone: ${phone}\nPostcode: ${postcode}\nClean type: ${data.cleanType}\nDate & Time: ${formattedDate}`;
+                    // Build address string if street and house number are available
+                    let addressStr = '';
+                    if (data.street || data.houseNumber) {
+                        addressStr = `\nAddress: ${data.houseNumber || ''} ${data.street || ''}`.trim();
+                    }
+                    
+                    const contractorMessage = `New SMS booking!\nName: ${name}\nPhone: ${phone}\nPostcode: ${postcode}\nClean type: ${data.cleanType}\nDate & Time: ${formattedDate}${addressStr}`;
                     // CHANGED: Wrapped in getTwilioOptions
                     await twilioClient.messages.create(getTwilioOptions({
                         body: contractorMessage,
@@ -868,12 +909,14 @@ app.post('/cal/reschedule-booking', async (req, res) => {
 });
 
 app.post('/cal/book-appointment', async (req, res) => {
-    const { name, phone, time, postcode } = req.body;
+    const { name, phone, time, postcode, street, houseNumber } = req.body;
     
     console.log('📅 Booking appointment for:', name);
     console.log('📞 Phone:', phone);
     console.log('🕒 Time received:', time);
     console.log('📍 Postcode:', postcode);
+    console.log('🏠 Street:', street);
+    console.log('🔢 House/Flat Number:', houseNumber);
     
     const fakeEmail = `${name.toLowerCase().replace(/\s/g, '')}_${Date.now()}@phonebooking.local`;
     console.log('📧 Generated fake email:', fakeEmail);
@@ -909,6 +952,8 @@ app.post('/cal/book-appointment', async (req, res) => {
                 eventTypeId: 6005228,
                 metadata: {
                     postcode: postcode || 'Not provided',
+                    street: street || '',
+                    houseNumber: houseNumber || '',
                     source: 'phone_call'
                 },
                 attendee: {
@@ -961,6 +1006,8 @@ app.post('/cal-webhook', async (req, res) => {
         const dateTime = booking.startTime || '?';
         const bookingType = 'booking';
         const postcode = booking.metadata?.postcode || 'Not provided';
+        const street = booking.metadata?.street || '';
+        const houseNumber = booking.metadata?.houseNumber || '';
         
         console.log('=== New Booking Details ===');
         console.log('Name:', name);
@@ -968,12 +1015,20 @@ app.post('/cal-webhook', async (req, res) => {
         console.log('Email:', email);
         console.log('Date & Time:', dateTime);
         console.log('Postcode:', postcode);
+        console.log('Street:', street);
+        console.log('House/Flat Number:', houseNumber);
         
         if (phone !== '?' && CONTRACTOR_PHONE_NUMBER) {
             try {
-                // CHANGED: Wrapped in getTwilioOptions
+                // Build address string if street and house number are available
+                let addressStr = '';
+                if (street || houseNumber) {
+                    addressStr = `\nAddress: ${houseNumber || ''} ${street || ''}`.trim();
+                }
+                
+                // CHANGED: Wrapped in getTwilioOptions and added address fields
                 await twilioClient.messages.create(getTwilioOptions({
-                    body: `New ${bookingType}!\nName: ${name}\nPhone: ${phone}\nPostcode: ${postcode}\nDate & Time: ${dateTime}`,
+                    body: `New ${bookingType}!\nName: ${name}\nPhone: ${phone}\nPostcode: ${postcode}\nDate & Time: ${dateTime}${addressStr}`,
                     from: TWILIO_PHONE_NUMBER,
                     to: CONTRACTOR_PHONE_NUMBER
                 }));
