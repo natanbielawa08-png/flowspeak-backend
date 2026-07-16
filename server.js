@@ -54,6 +54,55 @@ function getValue(obj, ...possibleNames) {
     return '';
 }
 
+// ===== ADDED: Address validation and formatting =====
+function validateAndFormatAddress(street, houseNumber) {
+    // Check if we have enough address information
+    const hasStreet = street && street.trim().length > 2;
+    const hasHouseNumber = houseNumber && houseNumber.trim().length > 0;
+    
+    // If we have both, format nicely
+    if (hasStreet && hasHouseNumber) {
+        return {
+            complete: true,
+            formatted: `${houseNumber.trim()} ${street.trim()}`,
+            street: street.trim(),
+            houseNumber: houseNumber.trim()
+        };
+    }
+    
+    // If we have only street but no house number
+    if (hasStreet && !hasHouseNumber) {
+        return {
+            complete: false,
+            missing: 'houseNumber',
+            message: "I have the street name but need the house/flat number. Could you please provide that?",
+            street: street.trim(),
+            houseNumber: ''
+        };
+    }
+    
+    // If we have only house number but no street
+    if (!hasStreet && hasHouseNumber) {
+        return {
+            complete: false,
+            missing: 'street',
+            message: "I have the house/flat number but need the street name. Could you please provide that?",
+            street: '',
+            houseNumber: houseNumber.trim()
+        };
+    }
+    
+    // If we have neither
+    return {
+        complete: false,
+        missing: 'both',
+        message: "I need your full address - both the street name and house/flat number. Could you please tell me?",
+        street: '',
+        houseNumber: ''
+    };
+}
+// ===== END ADDED =====
+
 app.post('/send-sms', (req, res) => {
     const { name, postcode, phone, cleanType, dateTime, bookingType, street, houseNumber } = req.body;
     
@@ -221,7 +270,22 @@ app.post('/post-call-webhook', async (req, res) => {
     console.log('Date & Time:', dateTime);
     console.log('Street:', street);
     console.log('House/Flat Number:', houseNumber);
+
+    // ===== ADDED: Address validation check =====
+    const addressValidation = validateAndFormatAddress(street, houseNumber);
+    if (!addressValidation.complete) {
+        console.log('⚠️ Incomplete address:', addressValidation.message);
+        console.log('   Missing:', addressValidation.missing);
+        console.log('   Street so far:', addressValidation.street);
+        console.log('   House number so far:', addressValidation.houseNumber);
+        // You could store this in a flag to trigger Retell AI to ask for missing parts
+        // Or log it for monitoring
+    } else {
+        console.log('✅ Complete address:', addressValidation.formatted);
+    }
+    // ===== END ADDED =====
     
+    // ===== IMPROVED: Send contractor SMS independently =====
     if (phone && CONTRACTOR_PHONE_NUMBER) {
         // Build address string if street and house number are available
         let addressStr = '';
@@ -232,7 +296,6 @@ app.post('/post-call-webhook', async (req, res) => {
         const contractorMessage = `New ${bookingType || 'booking'}!\nName: ${name || '?'}\nPostcode: ${postcode || 'Not provided'}\nPhone: ${phone}\nClean type: ${cleanType || '?'}\nDate & Time: ${dateTime || '?'}${addressStr}`;
         
         try {
-            // CHANGED: Wrapped in getTwilioOptions
             await twilioClient.messages.create(getTwilioOptions({
                 body: contractorMessage,
                 from: TWILIO_PHONE_NUMBER,
@@ -241,64 +304,68 @@ app.post('/post-call-webhook', async (req, res) => {
             console.log('✅ Contractor SMS sent');
         } catch (err) {
             console.error('❌ Contractor SMS error:', err.message);
+            // Don't re-throw - we don't want to fail the webhook
         }
     } else {
         console.log('❌ Missing phone or contractor number');
     }
+    // ===== END IMPROVED =====
     
-    const customerPhone = phone || getValue(body, 'phone', 'Phone', 'phone_number', 'phoneNumber', 'mobile', 'Mobile');
+    // ===== IMPROVED: Enhanced customer SMS with better validation =====
+    // Extract customer phone with better fallback
+    const customerPhone = phone || 
+                         getValue(body.call?.collected_dynamic_variables, 'phone', 'Phone') ||
+                         getValue(body, 'phone', 'Phone', 'phone_number', 'phoneNumber');
+    
+    // Validate phone more strictly
+    const isValidPhone = customerPhone && 
+                         typeof customerPhone === 'string' &&
+                         customerPhone.trim().length > 8 && // Minimum UK phone length
+                         !['?', 'undefined', 'null', 'unknown', 'not provided'].includes(customerPhone.toLowerCase()) &&
+                         /^[0-9+\-\s\(\)]{8,20}$/.test(customerPhone); // Basic phone format check
+    
+    // Get customer name with fallback
     const customerName = name || 'Customer';
     
-    const isValidPhone = customerPhone && 
-                         customerPhone !== '?' && 
-                         customerPhone !== 'undefined' && 
-                         customerPhone !== 'null' &&
-                         customerPhone.length > 5;
+    // Get action text
+    let actionText = '';
+    if (bookingType === 'cancellation') {
+        actionText = 'cancelled';
+    } else if (bookingType === 'reschedule') {
+        actionText = 'rescheduled';
+    } else {
+        actionText = 'booked';
+    }
     
+    // Format date/time
+    let formattedDateTime = dateTime || 'your requested time';
+    try {
+        const isISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(dateTime || '');
+        
+        if (isISO) {
+            const dateObj = new Date(dateTime);
+            formattedDateTime = dateObj.toLocaleString('en-GB', {
+                weekday: 'short',
+                day: '2-digit',
+                month: 'short',
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+            console.log('📅 Formatted ISO date:', formattedDateTime);
+        }
+    } catch (e) {
+        console.log('⚠️ Could not format date/time, using raw value:', dateTime);
+    }
+    
+    // Send customer SMS independently of contractor SMS
     if (isValidPhone) {
-        let actionText = '';
-        
-        if (bookingType === 'booking' || bookingType === '' || !bookingType) {
-            actionText = 'booked';
-        } else if (bookingType === 'cancellation') {
-            actionText = 'cancelled';
-        } else if (bookingType === 'reschedule') {
-            actionText = 'rescheduled';
-        } else {
-            actionText = 'booked';
-        }
-        
-        let formattedDateTime = dateTime || 'your requested time';
-        try {
-            const isISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(dateTime || '');
-            
-            if (isISO) {
-                const dateObj = new Date(dateTime);
-                formattedDateTime = dateObj.toLocaleString('en-GB', {
-                    weekday: 'short',
-                    day: '2-digit',
-                    month: 'short',
-                    year: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit'
-                });
-                console.log('📅 Formatted ISO date:', formattedDateTime);
-            } else if (dateTime) {
-                formattedDateTime = dateTime;
-                console.log('📅 Using human-readable date as-is:', formattedDateTime);
-            }
-        } catch (e) {
-            console.log('⚠️ Could not format date/time, using raw value:', dateTime);
-            formattedDateTime = dateTime || 'your requested time';
-        }
-        
         const customerMessage = `Hi ${customerName}, you've successfully ${actionText} a cleaning appointment with Magdalena Bielawa Cleaning Services for ${formattedDateTime}.\n\nAny questions? Please contact 07306666123`;
         
         console.log('📤 Sending customer SMS to:', customerPhone);
         console.log('📝 Message:', customerMessage);
         
         try {
-            // CHANGED: Wrapped in getTwilioOptions
             await twilioClient.messages.create(getTwilioOptions({
                 body: customerMessage,
                 from: TWILIO_PHONE_NUMBER,
@@ -307,11 +374,16 @@ app.post('/post-call-webhook', async (req, res) => {
             console.log('✅ Customer SMS sent to:', customerPhone);
         } catch (err) {
             console.error('❌ Customer SMS error:', err.message);
+            // Don't re-throw - we don't want to fail the webhook
+            // Optionally store failed SMS in memory for retry
         }
     } else {
         console.log('⚠️ No valid customer phone number found, skipping customer SMS');
-        console.log('   Phone value was:', customerPhone);
+        console.log('   Phone value was:', JSON.stringify(customerPhone));
+        console.log('   Phone type:', typeof customerPhone);
+        console.log('   Phone length:', customerPhone?.length);
     }
+    // ===== END IMPROVED =====
     
     res.status(200).send('OK');
 });
@@ -380,9 +452,30 @@ async function handleBookingSms(req, from, to, body, conversation) {
             
         case 'collecting_postcode':
             data.postcode = message;
-            // CHANGED: Wrapped in getTwilioOptions
+            // CHANGED: Now ask for street first, then house number
             await twilioClient.messages.create(getTwilioOptions({
-                body: "Great! What type of cleaning do you need? (deep clean, regular clean, end of tenancy)",
+                body: "Great! What's your street name?",
+                from: TWILIO_PHONE_NUMBER,
+                to: from
+            }));
+            conversation.step = 'collecting_street';
+            break;
+            
+        case 'collecting_street':
+            data.street = message;
+            await twilioClient.messages.create(getTwilioOptions({
+                body: "And what's your house or flat number?",
+                from: TWILIO_PHONE_NUMBER,
+                to: from
+            }));
+            conversation.step = 'collecting_house_number';
+            break;
+            
+        case 'collecting_house_number':
+            data.houseNumber = message;
+            // Then proceed to ask for clean type
+            await twilioClient.messages.create(getTwilioOptions({
+                body: "What type of cleaning do you need? (deep clean, regular clean, end of tenancy)",
                 from: TWILIO_PHONE_NUMBER,
                 to: from
             }));
