@@ -356,6 +356,7 @@ function getSmsConversation(from, to) {
             to,
             step: 'greeting',
             collectedData: {},
+            pendingCancellation: null, // ADDED: Store booking info for confirmation
             lastUpdated: Date.now()
         });
     }
@@ -630,6 +631,7 @@ async function handleBookingSms(req, from, to, body, conversation) {
         default:
             conversation.step = 'greeting';
             conversation.collectedData = {};
+            conversation.pendingCancellation = null;
             // CHANGED: Wrapped in getTwilioOptions
             await twilioClient.messages.create(getTwilioOptions({
                 body: "Hi! Would you like to book a cleaning? Just reply 'yes' or tell me what you need.",
@@ -639,9 +641,12 @@ async function handleBookingSms(req, from, to, body, conversation) {
     }
 }
 
-async function handleCancelSms(req, from, to, conversation) {
+// ===== NEW: Start cancellation flow =====
+async function startCancellationFlow(req, from, to, conversation) {
     const phone = from;
     const baseUrl = getBaseUrl(req);
+    
+    console.log('📱 Starting cancellation flow for:', phone);
     
     try {
         const searchResponse = await fetch(`${baseUrl}/cal/search-bookings-by-phone`, {
@@ -653,7 +658,6 @@ async function handleCancelSms(req, from, to, conversation) {
         const searchResult = await searchResponse.json();
         
         if (!searchResult.success || searchResult.count === 0) {
-            // CHANGED: Wrapped in getTwilioOptions
             await twilioClient.messages.create(getTwilioOptions({
                 body: "I couldn't find any upcoming bookings for this phone number. If you need help, please call us at 07306666123",
                 from: TWILIO_PHONE_NUMBER,
@@ -663,34 +667,32 @@ async function handleCancelSms(req, from, to, conversation) {
         }
         
         const bookings = searchResult.bookings;
+        
         if (bookings.length === 1) {
-            const bookingUid = bookings[0].bookingUid;
-            const cancelResponse = await fetch(`${baseUrl}/cal/cancel-booking`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    bookingUid,
-                    cancellationReason: 'Customer requested via SMS'
-                })
+            const booking = bookings[0];
+            const date = new Date(booking.dateTime);
+            const formattedDate = date.toLocaleString('en-GB', {
+                weekday: 'short',
+                day: '2-digit',
+                month: 'short',
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
             });
             
-            const cancelResult = await cancelResponse.json();
+            // Store booking info for confirmation
+            conversation.pendingCancellation = {
+                bookingUid: booking.bookingUid,
+                dateTime: booking.dateTime,
+                formattedDate: formattedDate
+            };
+            conversation.step = 'pending_cancellation_confirmation';
             
-            if (cancelResult.success) {
-                // CHANGED: Wrapped in getTwilioOptions
-                await twilioClient.messages.create(getTwilioOptions({
-                    body: "✅ Your booking has been cancelled. If you need to book again, just let me know!",
-                    from: TWILIO_PHONE_NUMBER,
-                    to: from
-                }));
-            } else {
-                // CHANGED: Wrapped in getTwilioOptions
-                await twilioClient.messages.create(getTwilioOptions({
-                    body: "❌ I couldn't cancel your booking. Please call us at 07306666123 for help.",
-                    from: TWILIO_PHONE_NUMBER,
-                    to: from
-                }));
-            }
+            await twilioClient.messages.create(getTwilioOptions({
+                body: `I found your booking on ${formattedDate}.\n\nReply YES CANCEL to confirm cancellation, or reply NO to keep your booking.`,
+                from: TWILIO_PHONE_NUMBER,
+                to: from
+            }));
         } else {
             let listMessage = "I found multiple bookings:\n";
             bookings.forEach((b, i) => {
@@ -706,7 +708,6 @@ async function handleCancelSms(req, from, to, conversation) {
             });
             listMessage += "\nFor now, please call us at 07306666123 to choose which one to cancel.";
             
-            // CHANGED: Wrapped in getTwilioOptions
             await twilioClient.messages.create(getTwilioOptions({
                 body: listMessage,
                 from: TWILIO_PHONE_NUMBER,
@@ -714,14 +715,96 @@ async function handleCancelSms(req, from, to, conversation) {
             }));
         }
     } catch (error) {
-        console.error('❌ SMS cancel error:', error.message);
-        // CHANGED: Wrapped in getTwilioOptions
+        console.error('❌ SMS cancellation flow error:', error.message);
         await twilioClient.messages.create(getTwilioOptions({
             body: "❌ Something went wrong. Please call us at 07306666123 for help.",
             from: TWILIO_PHONE_NUMBER,
             to: from
         }));
     }
+}
+// ===== END NEW =====
+
+async function handleCancelSms(req, from, to, conversation) {
+    const message = req.body.Body ? req.body.Body.trim().toUpperCase() : '';
+    const baseUrl = getBaseUrl(req);
+    
+    // Check if we're in the confirmation step
+    if (conversation.step === 'pending_cancellation_confirmation' && conversation.pendingCancellation) {
+        // They replied to the confirmation prompt
+        if (message === 'YES CANCEL') {
+            // Confirmed - cancel the booking
+            const bookingUid = conversation.pendingCancellation.bookingUid;
+            console.log('✅ Cancellation confirmed for booking:', bookingUid);
+            
+            try {
+                // Do NOT pass customerPhone or customerName to prevent duplicate SMS
+                // The SMS handler will send the confirmation message
+                const cancelResponse = await fetch(`${baseUrl}/cal/cancel-booking`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        bookingUid,
+                        cancellationReason: 'Customer confirmed via SMS'
+                    })
+                });
+                
+                const cancelResult = await cancelResponse.json();
+                
+                if (cancelResult.success) {
+                    await twilioClient.messages.create(getTwilioOptions({
+                        body: "✅ Your booking has been cancelled. If you need to book again, just let me know!",
+                        from: TWILIO_PHONE_NUMBER,
+                        to: from
+                    }));
+                } else {
+                    await twilioClient.messages.create(getTwilioOptions({
+                        body: "❌ I couldn't cancel your booking. Please call us at 07306666123 for help.",
+                        from: TWILIO_PHONE_NUMBER,
+                        to: from
+                    }));
+                }
+            } catch (error) {
+                console.error('❌ Cancellation error:', error.message);
+                await twilioClient.messages.create(getTwilioOptions({
+                    body: "❌ Something went wrong. Please call us at 07306666123 for help.",
+                    from: TWILIO_PHONE_NUMBER,
+                    to: from
+                }));
+            }
+            
+            // Reset conversation state
+            conversation.step = 'greeting';
+            conversation.pendingCancellation = null;
+            conversation.collectedData = {};
+            
+        } else if (message === 'NO') {
+            // They chose not to cancel
+            await twilioClient.messages.create(getTwilioOptions({
+                body: "✅ Your booking has been kept. If you change your mind, just reply CANCEL again.",
+                from: TWILIO_PHONE_NUMBER,
+                to: from
+            }));
+            
+            // Reset conversation state
+            conversation.step = 'greeting';
+            conversation.pendingCancellation = null;
+            conversation.collectedData = {};
+        } else {
+            // They replied with something unexpected during confirmation
+            await twilioClient.messages.create(getTwilioOptions({
+                body: `To confirm cancellation, reply YES CANCEL.\nTo keep your booking, reply NO.`,
+                from: TWILIO_PHONE_NUMBER,
+                to: from
+            }));
+        }
+        return;
+    }
+    
+    // If we get here, they said "cancel" but we're not in confirmation state
+    // This should be handled by startCancellationFlow now
+    // But as a fallback, start the flow
+    await startCancellationFlow(req, from, to, conversation);
 }
 
 async function handleRescheduleSms(req, from, to, conversation) {
@@ -748,16 +831,26 @@ app.post('/sms-webhook', async (req, res) => {
     
     const message = Body.trim().toLowerCase();
     
-    if (message.includes('cancel') || message.includes('cancellation')) {
+    // Check if we're in cancellation confirmation state
+    if (conversation.step === 'pending_cancellation_confirmation') {
+        // Let handleCancelSms deal with the confirmation response
         await handleCancelSms(req, From, To, conversation);
         return res.status(200).send('OK');
     }
     
+    // Check for cancellation request (start the flow)
+    if (message.includes('cancel') || message.includes('cancellation')) {
+        await startCancellationFlow(req, From, To, conversation);
+        return res.status(200).send('OK');
+    }
+    
+    // Check for reschedule
     if (message.includes('reschedule') || message.includes('change') || message.includes('move')) {
         await handleRescheduleSms(req, From, To, conversation);
         return res.status(200).send('OK');
     }
     
+    // Booking flow
     if (conversation.step === 'booking_complete') {
         conversation.step = 'greeting';
         conversation.collectedData = {};
@@ -878,7 +971,8 @@ app.post('/cal/cancel-booking', async (req, res) => {
         console.log('📦 Cancellation response:', JSON.stringify(result, null, 2));
         
         if (response.ok) {
-            // Send customer confirmation SMS
+            // Send customer confirmation SMS (for voice cancellations only)
+            // SMS cancellations handle their own confirmation to avoid duplicates
             if (customerPhone && customerPhone !== '?' && customerPhone.length > 8) {
                 const name = customerName || 'Customer';
                 const message = `Hi ${name}, your cleaning appointment has been successfully cancelled.\n\nIf you need to book again, just give us a call.`;
