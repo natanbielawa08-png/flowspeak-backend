@@ -30,6 +30,38 @@ function getTwilioOptions(messageData) {
 
 const CONTRACTOR_PHONE_NUMBER = process.env.CONTRACTOR_PHONE_NUMBER;
 
+// ===== STARTUP: Environment validation =====
+function validateEnvironment() {
+    const required = [
+        'TWILIO_ACCOUNT_SID',
+        'TWILIO_AUTH_TOKEN',
+        'TWILIO_PHONE_NUMBER',
+        'CONTRACTOR_PHONE_NUMBER',
+        'CAL_API_KEY'
+    ];
+    
+    const missing = required.filter(key => !process.env[key]);
+    
+    if (missing.length > 0) {
+        console.error('❌ Missing required environment variables:');
+        missing.forEach(key => console.error(`   - ${key}`));
+        console.error('\nPlease set these variables and restart the server.');
+        process.exit(1);
+    }
+    
+    console.log('✅ All required environment variables are set');
+    
+    // Optional: Log which optional features are enabled
+    if (process.env.DISABLE_TWILIO_RISK_CHECK === 'true') {
+        console.log('⚠️ Twilio risk-check is DISABLED (DISABLE_TWILIO_RISK_CHECK=true)');
+    } else {
+        console.log('✅ Twilio risk-check is ENABLED');
+    }
+}
+
+validateEnvironment();
+// ===== END STARTUP =====
+
 // Track processed calls to prevent duplicate SMS
 const processedCalls = new Set();
 
