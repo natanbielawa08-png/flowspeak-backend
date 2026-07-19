@@ -1,12 +1,31 @@
 const express = require('express');
 const twilio = require('twilio');
 const chrono = require('chrono-node');
+const crypto = require('crypto');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// FIX 1: Increase payload size limit to handle Retell webhooks (fixes 413 error)
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+// ===== Trust proxy for HTTPS behind Render load balancer =====
+app.set('trust proxy', 1);
+// ===== END trust proxy =====
+
+// ===== Capture raw body for webhook signature validation using verify =====
+const rawBodyBuffer = (req, res, buf, encoding) => {
+    if (buf && buf.length) {
+        req.rawBody = buf.toString(encoding || 'utf8');
+    }
+};
+
+app.use(express.json({ 
+    limit: '10mb',
+    verify: rawBodyBuffer
+}));
+app.use(express.urlencoded({ 
+    extended: true, 
+    limit: '10mb',
+    verify: rawBodyBuffer
+}));
+// ===== END raw body capture =====
 
 const twilioClient = twilio(
     process.env.TWILIO_ACCOUNT_SID,
@@ -57,6 +76,12 @@ function validateEnvironment() {
     } else {
         console.log('✅ Twilio risk-check is ENABLED');
     }
+    
+    if (process.env.RETELL_API_KEY) {
+        console.log('✅ Retell webhook validation is ENABLED');
+    } else {
+        console.log('⚠️ RETELL_API_KEY not set - Retell webhook validation disabled');
+    }
 }
 
 validateEnvironment();
@@ -88,6 +113,55 @@ function getValue(obj, ...possibleNames) {
     }
     return '';
 }
+
+// ===== Phone number normalization =====
+// Converts UK phone numbers to E.164 format for consistent comparison
+function normalizePhoneNumber(phone) {
+    if (!phone) return '';
+
+    // Keep digits only
+    let cleaned = String(phone).replace(/\D/g, '');
+
+    // Convert international dialing prefix 00 to +
+    // Example: 00447306666123 → +447306666123
+    if (cleaned.startsWith('0044')) {
+        cleaned = cleaned.substring(4);
+
+        if (cleaned.startsWith('0')) {
+            cleaned = cleaned.substring(1);
+        }
+
+        return `+44${cleaned}`;
+    }
+
+    // UK country code without +
+    // Example: 447306666123 → +447306666123
+    if (cleaned.startsWith('44')) {
+        cleaned = cleaned.substring(2);
+
+        if (cleaned.startsWith('0')) {
+            cleaned = cleaned.substring(1);
+        }
+
+        return `+44${cleaned}`;
+    }
+
+    // UK national format
+    // Example: 07306666123 → +447306666123
+    if (cleaned.startsWith('0') && cleaned.length === 11) {
+        return `+44${cleaned.substring(1)}`;
+    }
+
+    // UK number missing its leading zero
+    // Example: 7306666123 → +447306666123
+    if (cleaned.startsWith('7') && cleaned.length === 10) {
+        return `+44${cleaned}`;
+    }
+
+    // Unknown/non-UK format: return digits for consistent comparison
+    return cleaned;
+}
+// ===== END Phone number normalization =====
 
 // ===== ADDED: Address validation and formatting =====
 function validateAndFormatAddress(street, houseNumber) {
@@ -138,6 +212,83 @@ function validateAndFormatAddress(street, houseNumber) {
 }
 // ===== END ADDED =====
 
+// ===== Webhook signature validation =====
+
+// Twilio webhook signature validation
+function validateTwilioWebhook(req) {
+    const twilioSignature = req.headers['x-twilio-signature'] || '';
+    const url = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
+    
+    if (!twilioSignature) {
+        console.log('❌ Missing X-Twilio-Signature header');
+        return false;
+    }
+    
+    try {
+        // validateRequest is the most widely supported method
+        // It handles both form-urlencoded and JSON bodies correctly
+        return twilio.validateRequest(
+            process.env.TWILIO_AUTH_TOKEN,
+            twilioSignature,
+            url,
+            req.body
+        );
+    } catch (err) {
+        console.error('❌ Twilio signature validation error:', err.message);
+        return false;
+    }
+}
+
+// Retell webhook signature validation
+function validateRetellWebhook(req) {
+    const signature = req.headers['x-retell-signature'] || '';
+    const apiKey = process.env.RETELL_API_KEY;
+
+    if (!apiKey) {
+        console.error('❌ RETELL_API_KEY is not configured');
+        return false;
+    }
+
+    const match = signature.match(/^v=(\d+),d=([a-fA-F0-9]+)$/);
+
+    if (!match) {
+        console.log('❌ Invalid X-Retell-Signature format');
+        return false;
+    }
+
+    const timestamp = match[1];
+    const receivedDigest = match[2].toLowerCase();
+
+    // Reject signatures older/newer than five minutes
+    const timestampMs = Number(timestamp);
+
+    if (
+        !Number.isFinite(timestampMs) ||
+        Math.abs(Date.now() - timestampMs) > 5 * 60 * 1000
+    ) {
+        console.log('❌ Retell webhook timestamp is outside allowed window');
+        return false;
+    }
+
+    const rawBody = req.rawBody || '';
+
+    const expectedDigest = crypto
+        .createHmac('sha256', apiKey)
+        .update(rawBody + timestamp)
+        .digest('hex');
+
+    const receivedBuffer = Buffer.from(receivedDigest, 'hex');
+    const expectedBuffer = Buffer.from(expectedDigest, 'hex');
+
+    if (receivedBuffer.length !== expectedBuffer.length) {
+        return false;
+    }
+
+    return crypto.timingSafeEqual(receivedBuffer, expectedBuffer);
+}
+
+// ===== END Webhook signature validation =====
+
 app.post('/send-sms', (req, res) => {
     const { name, postcode, phone, cleanType, dateTime, bookingType, street, houseNumber } = req.body;
     
@@ -180,10 +331,21 @@ app.post('/send-sms', (req, res) => {
 });
 
 app.post('/retell-webhook', (req, res) => {
+    // Validate Retell signature
+    if (!validateRetellWebhook(req)) {
+        console.log('❌ Invalid Retell webhook signature - request rejected');
+        return res.status(401).send('Unauthorized');
+    }
     res.status(200).send('OK');
 });
 
 app.post('/post-call-webhook', async (req, res) => {
+    // Validate Retell signature
+    if (!validateRetellWebhook(req)) {
+        console.log('❌ Invalid Retell webhook signature - request rejected');
+        return res.status(401).send('Unauthorized');
+    }
+    
     const body = req.body;
     const callId = body.call?.call_id || body.call_id;
     const eventType = body.event;
@@ -643,10 +805,10 @@ async function handleBookingSms(req, from, to, body, conversation) {
 
 // ===== NEW: Start cancellation flow =====
 async function startCancellationFlow(req, from, to, conversation) {
-    const phone = from;
+    const phone = normalizePhoneNumber(from);
     const baseUrl = getBaseUrl(req);
     
-    console.log('📱 Starting cancellation flow for:', phone);
+    console.log('📱 Starting cancellation flow for:', from, '(normalized:', phone, ')');
     
     try {
         const searchResponse = await fetch(`${baseUrl}/cal/search-bookings-by-phone`, {
@@ -819,6 +981,12 @@ async function handleRescheduleSms(req, from, to, conversation) {
 // ====== SMS WEBHOOK ROUTE (NOW AFTER FUNCTIONS) ======
 
 app.post('/sms-webhook', async (req, res) => {
+    // Validate Twilio signature
+    if (!validateTwilioWebhook(req)) {
+        console.log('❌ Invalid Twilio webhook signature - request rejected');
+        return res.status(401).send('Unauthorized');
+    }
+    
     const { From, To, Body } = req.body;
     
     console.log('📱 SMS received');
@@ -919,11 +1087,10 @@ app.post('/cal/search-bookings-by-phone', async (req, res) => {
         
         const bookings = await response.json();
         
-        const normalizePhone = (p) => p?.replace(/[\s\+\-\(\)]/g, '');
-        const normalizedSearchPhone = normalizePhone(phone);
+        const normalizedSearchPhone = normalizePhoneNumber(phone);
         
         const matchingBookings = bookings.data?.filter(b => 
-            b.attendees?.some(a => normalizePhone(a.phoneNumber) === normalizedSearchPhone)
+            b.attendees?.some(a => normalizePhoneNumber(a.phoneNumber) === normalizedSearchPhone)
         );
         
         if (matchingBookings && matchingBookings.length > 0) {
