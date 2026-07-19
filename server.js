@@ -14,16 +14,19 @@ const twilioClient = twilio(
 );
 const TWILIO_PHONE_NUMBER = process.env.TWILIO_PHONE_NUMBER;
 
-// ===== ADDED: Helper to determine riskCheck setting =====
-// Only disable riskCheck in non-production environments
+// ===== Twilio message options =====
+// Set DISABLE_TWILIO_RISK_CHECK=true in Render while Twilio's
+// fraud protection is incorrectly blocking legitimate messages.
 function getTwilioOptions(messageData) {
     const options = { ...messageData };
-    if (process.env.NODE_ENV !== 'production') {
+
+    if (process.env.DISABLE_TWILIO_RISK_CHECK === 'true') {
         options.riskCheck = 'disable';
     }
+
     return options;
 }
-// ===== END ADDED =====
+// ===== END Twilio message options =====
 
 const CONTRACTOR_PHONE_NUMBER = process.env.CONTRACTOR_PHONE_NUMBER;
 
