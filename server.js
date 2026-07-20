@@ -1240,6 +1240,9 @@ app.post('/cal/reschedule-booking', async (req, res) => {
     // Fetch the original booking to get customer details if not provided
     let phoneToUse = customerPhone;
     let nameToUse = customerName;
+    let postcodeToUse = null;
+    let streetToUse = null;
+    let houseNumberToUse = null;
     
     if (!phoneToUse) {
         try {
@@ -1253,11 +1256,19 @@ app.post('/cal/reschedule-booking', async (req, res) => {
             
             if (getResponse.ok) {
                 const bookingDetails = await getResponse.json();
-                const attendee = bookingDetails.data?.attendees?.[0];
+                const bookingData = bookingDetails.data;
+                const attendee = bookingData?.attendees?.[0];
                 if (attendee) {
                     phoneToUse = attendee.phoneNumber || attendee.phone || null;
                     nameToUse = attendee.name || null;
                     console.log('✅ Found customer from booking:', { phone: phoneToUse, name: nameToUse });
+                }
+                // Get address info from metadata
+                if (bookingData?.metadata) {
+                    postcodeToUse = bookingData.metadata.postcode || null;
+                    streetToUse = bookingData.metadata.street || null;
+                    houseNumberToUse = bookingData.metadata.houseNumber || null;
+                    console.log('📍 Found address from booking:', { postcode: postcodeToUse, street: streetToUse, houseNumber: houseNumberToUse });
                 }
             } else {
                 console.log('⚠️ Could not fetch booking details, status:', getResponse.status);
@@ -1319,6 +1330,46 @@ app.post('/cal/reschedule-booking', async (req, res) => {
                 }
             } else {
                 console.log('⚠️ No customer phone available for SMS notification');
+            }
+            
+            // Send contractor notification SMS
+            if (CONTRACTOR_PHONE_NUMBER) {
+                try {
+                    // Build address string if available
+                    let addressStr = '';
+                    const addressPart = `${houseNumberToUse || ''} ${streetToUse || ''}`.trim();
+                    if (addressPart) {
+                        addressStr = `\nAddress: ${addressPart}`;
+                    }
+                    
+                    // Format the new date/time
+                    let formattedDateTime = validTime;
+                    try {
+                        const dateObj = new Date(validTime);
+                        formattedDateTime = dateObj.toLocaleString('en-GB', {
+                            weekday: 'short',
+                            day: '2-digit',
+                            month: 'short',
+                            year: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit'
+                        });
+                    } catch (e) {
+                        console.log('⚠️ Could not format date/time, using raw value:', validTime);
+                    }
+                    
+                    const contractorMessage = `🔄 Booking RESCHEDULED!\nName: ${nameToUse || 'Customer'}\nPhone: ${phoneToUse || '?'}\nPostcode: ${postcodeToUse || 'Not provided'}\nNew Date & Time: ${formattedDateTime}${addressStr}`;
+                    
+                    await twilioClient.messages.create(getTwilioOptions({
+                        body: contractorMessage,
+                        from: TWILIO_PHONE_NUMBER,
+                        to: CONTRACTOR_PHONE_NUMBER
+                    }));
+                    console.log('✅ Contractor reschedule SMS sent');
+                } catch (err) {
+                    console.error('❌ Contractor SMS error:', err.message);
+                    // Don't fail the reschedule if SMS fails
+                }
             }
             
             res.json({ 
