@@ -900,8 +900,7 @@ async function handleCancelSms(req, from, to, conversation) {
             console.log('✅ Cancellation confirmed for booking:', bookingUid);
             
             try {
-                // Do NOT pass customerPhone or customerName to prevent duplicate SMS
-                // The SMS handler will send the confirmation message
+                // Call the cancellation endpoint (it will send the confirmation SMS)
                 const cancelResponse = await fetch(`${baseUrl}/cal/cancel-booking`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -913,13 +912,9 @@ async function handleCancelSms(req, from, to, conversation) {
                 
                 const cancelResult = await cancelResponse.json();
                 
-                if (cancelResult.success) {
-                    await twilioClient.messages.create(getTwilioOptions({
-                        body: "✅ Your booking has been cancelled. If you need to book again, just let me know!",
-                        from: TWILIO_PHONE_NUMBER,
-                        to: from
-                    }));
-                } else {
+                if (!cancelResult.success) {
+                    // Only send an error message if cancellation failed
+                    // (success case sends SMS from /cal/cancel-booking)
                     await twilioClient.messages.create(getTwilioOptions({
                         body: "❌ I couldn't cancel your booking. Please call us at 07306666123 for help.",
                         from: TWILIO_PHONE_NUMBER,
@@ -1158,8 +1153,64 @@ app.post('/cal/search-bookings-by-phone', async (req, res) => {
 app.post('/cal/cancel-booking', async (req, res) => {
     const { bookingUid, cancellationReason, customerPhone, customerName } = req.body;
     
+    // Validate required fields
+    if (!bookingUid) {
+        console.log('❌ Missing booking UID');
+        return res.json({ 
+            success: false, 
+            error: 'Missing booking UID' 
+        });
+    }
+    
     console.log('🗑️ Cancelling booking:', bookingUid);
-    if (customerPhone) console.log('📞 Customer phone for notification:', customerPhone);
+    if (customerPhone) console.log('📞 Customer phone provided:', customerPhone);
+    
+    // Fetch the booking to get customer details if not provided
+    let phoneToUse = customerPhone;
+    let nameToUse = customerName;
+    let postcodeToUse = null;
+    let streetToUse = null;
+    let houseNumberToUse = null;
+    let bookingStartTime = null;
+    
+    if (!phoneToUse) {
+        try {
+            console.log('🔍 Fetching booking details for customer info...');
+            const getResponse = await fetch(`https://api.cal.com/v2/bookings/${bookingUid}`, {
+                headers: {
+                    'Authorization': `Bearer ${process.env.CAL_API_KEY}`,
+                    'cal-api-version': '2024-08-13'
+                }
+            });
+            
+            if (getResponse.ok) {
+                const bookingDetails = await getResponse.json();
+                const bookingData = bookingDetails.data;
+                const attendee = bookingData?.attendees?.[0];
+                if (attendee) {
+                    phoneToUse = attendee.phoneNumber || attendee.phone || null;
+                    nameToUse = attendee.name || null;
+                    console.log('✅ Found customer from booking:', { phone: phoneToUse, name: nameToUse });
+                }
+                // Get address info from metadata
+                if (bookingData?.metadata) {
+                    postcodeToUse = bookingData.metadata.postcode || null;
+                    streetToUse = bookingData.metadata.street || null;
+                    houseNumberToUse = bookingData.metadata.houseNumber || null;
+                    console.log('📍 Found address from booking:', { postcode: postcodeToUse, street: streetToUse, houseNumber: houseNumberToUse });
+                }
+                // Get booking start time
+                if (bookingData?.start) {
+                    bookingStartTime = bookingData.start;
+                    console.log('📅 Booking start time:', bookingStartTime);
+                }
+            } else {
+                console.log('⚠️ Could not fetch booking details, status:', getResponse.status);
+            }
+        } catch (fetchErr) {
+            console.log('⚠️ Could not fetch booking details:', fetchErr.message);
+        }
+    }
     
     try {
         const response = await fetch(`https://api.cal.com/v2/bookings/${bookingUid}/cancel`, {
@@ -1178,21 +1229,64 @@ app.post('/cal/cancel-booking', async (req, res) => {
         console.log('📦 Cancellation response:', JSON.stringify(result, null, 2));
         
         if (response.ok) {
-            // Send customer confirmation SMS (for voice cancellations only)
-            // SMS cancellations handle their own confirmation to avoid duplicates
-            if (customerPhone && customerPhone !== '?' && customerPhone.length > 8) {
-                const name = customerName || 'Customer';
+            // Send customer confirmation SMS
+            if (phoneToUse && phoneToUse !== '?' && phoneToUse.length > 8) {
+                const name = nameToUse || 'Customer';
                 const message = `Hi ${name}, your cleaning appointment has been successfully cancelled.\n\nIf you need to book again, just give us a call.`;
                 
                 try {
                     await twilioClient.messages.create(getTwilioOptions({
                         body: message,
                         from: TWILIO_PHONE_NUMBER,
-                        to: customerPhone
+                        to: phoneToUse
                     }));
-                    console.log('✅ Customer cancellation SMS sent to:', customerPhone);
+                    console.log('✅ Customer cancellation SMS sent to:', phoneToUse);
                 } catch (smsErr) {
                     console.error('❌ Customer SMS error:', smsErr.message);
+                    // Don't fail the cancellation if SMS fails
+                }
+            } else {
+                console.log('⚠️ No customer phone available for SMS notification');
+            }
+            
+            // Send contractor notification SMS
+            if (CONTRACTOR_PHONE_NUMBER) {
+                try {
+                    // Build address string if available
+                    let addressStr = '';
+                    const addressPart = `${houseNumberToUse || ''} ${streetToUse || ''}`.trim();
+                    if (addressPart) {
+                        addressStr = `\nAddress: ${addressPart}`;
+                    }
+                    
+                    // Format the cancelled date/time
+                    let formattedDateTime = bookingStartTime || 'Unknown';
+                    try {
+                        if (bookingStartTime) {
+                            const dateObj = new Date(bookingStartTime);
+                            formattedDateTime = dateObj.toLocaleString('en-GB', {
+                                weekday: 'short',
+                                day: '2-digit',
+                                month: 'short',
+                                year: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit'
+                            });
+                        }
+                    } catch (e) {
+                        console.log('⚠️ Could not format date/time');
+                    }
+                    
+                    const contractorMessage = `❌ Booking CANCELLED!\nName: ${nameToUse || 'Customer'}\nPhone: ${phoneToUse || '?'}\nPostcode: ${postcodeToUse || 'Not provided'}\nOriginal Date & Time: ${formattedDateTime}${addressStr}`;
+                    
+                    await twilioClient.messages.create(getTwilioOptions({
+                        body: contractorMessage,
+                        from: TWILIO_PHONE_NUMBER,
+                        to: CONTRACTOR_PHONE_NUMBER
+                    }));
+                    console.log('✅ Contractor cancellation SMS sent');
+                } catch (err) {
+                    console.error('❌ Contractor SMS error:', err.message);
                     // Don't fail the cancellation if SMS fails
                 }
             }
@@ -1215,15 +1309,25 @@ app.post('/cal/cancel-booking', async (req, res) => {
 app.post('/cal/reschedule-booking', async (req, res) => {
     const { bookingUid, newStartTime, customerPhone, customerName } = req.body;
     
+    // Validate required fields
+    if (!bookingUid) {
+        console.log('❌ Missing booking UID');
+        return res.json({ 
+            success: false, 
+            error: 'Missing booking UID' 
+        });
+    }
+    
+    if (!newStartTime || newStartTime === '') {
+        console.log('❌ No new time provided');
+        return res.json({ success: false, error: 'No new time provided' });
+    }
+    
     console.log('📅 Rescheduling booking:', bookingUid);
     console.log('🕒 New time:', newStartTime);
     if (customerPhone) console.log('📞 Customer phone provided:', customerPhone);
     
     let validTime = newStartTime;
-    if (!newStartTime || newStartTime === '') {
-        console.log('❌ No new time provided');
-        return res.json({ success: false, error: 'No new time provided' });
-    }
     
     if (!newStartTime.includes('T') || !newStartTime.includes('Z')) {
         try {
@@ -1394,8 +1498,8 @@ app.post('/cal/book-appointment', async (req, res) => {
     console.log('📞 Phone:', phone);
     console.log('🕒 Time received:', time);
     console.log('📍 Postcode:', postcode);
-    console.log('🏠 Street:', street);
-    console.log('🔢 House/Flat Number:', houseNumber);
+    console.log('🏠 Street:', street || '⚠️ MISSING');
+    console.log('🔢 House/Flat Number:', houseNumber || '⚠️ MISSING');
     console.log('📱 Source:', source || 'phone_call (default)');
     
     const fakeEmail = `${name.toLowerCase().replace(/\s/g, '')}_${Date.now()}@phonebooking.local`;
@@ -1500,6 +1604,28 @@ app.post('/cal-webhook', async (req, res) => {
         console.log('House/Flat Number:', houseNumber);
         console.log('Source:', bookingSource);
         
+        // ===== ADDRESS DEBUG =====
+        console.log('📍 Address Debug - Street:', street || '(empty)');
+        console.log('📍 Address Debug - House Number:', houseNumber || '(empty)');
+        console.log('📍 Address Debug - Postcode:', postcode || '(empty)');
+        // ===== END ADDRESS DEBUG =====
+        
+        // Format the date/time for contractor SMS
+        let formattedDateTime = dateTime;
+        try {
+            const dateObj = new Date(dateTime);
+            formattedDateTime = dateObj.toLocaleString('en-GB', {
+                weekday: 'short',
+                day: '2-digit',
+                month: 'short',
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        } catch (e) {
+            console.log('⚠️ Could not format booking time:', e.message);
+        }
+        
         if (phone !== '?' && CONTRACTOR_PHONE_NUMBER) {
             try {
                 // Build address string if street and house number are available
@@ -1511,7 +1637,7 @@ app.post('/cal-webhook', async (req, res) => {
                 
                 // CHANGED: Wrapped in getTwilioOptions and added address fields
                 await twilioClient.messages.create(getTwilioOptions({
-                    body: `New ${bookingType}!\nName: ${name}\nPhone: ${phone}\nPostcode: ${postcode}\nDate & Time: ${dateTime}${addressStr}`,
+                    body: `New ${bookingType}!\nName: ${name}\nPhone: ${phone}\nPostcode: ${postcode}\nDate & Time: ${formattedDateTime}${addressStr}`,
                     from: TWILIO_PHONE_NUMBER,
                     to: CONTRACTOR_PHONE_NUMBER
                 }));
@@ -1526,10 +1652,10 @@ app.post('/cal-webhook', async (req, res) => {
         if (bookingSource !== 'sms' && phone && phone !== '?' && phone.length > 8) {
             try {
                 // Format the date/time for customer message
-                let formattedDateTime = dateTime;
+                let formattedCustomerDateTime = dateTime;
                 try {
                     const dateObj = new Date(dateTime);
-                    formattedDateTime = dateObj.toLocaleString('en-GB', {
+                    formattedCustomerDateTime = dateObj.toLocaleString('en-GB', {
                         weekday: 'short',
                         day: '2-digit',
                         month: 'short',
@@ -1541,7 +1667,7 @@ app.post('/cal-webhook', async (req, res) => {
                     console.log('⚠️ Could not format date/time for customer SMS:', dateTime);
                 }
                 
-                const customerMessage = `Hi ${name}, you've successfully booked a cleaning appointment with Magdalena Bielawa Cleaning Services for ${formattedDateTime}.\n\nAny questions? Please contact 07306666123`;
+                const customerMessage = `Hi ${name}, you've successfully booked a cleaning appointment with Magdalena Bielawa Cleaning Services for ${formattedCustomerDateTime}.\n\nAny questions? Please contact 07306666123`;
                 
                 await twilioClient.messages.create(getTwilioOptions({
                     body: customerMessage,
