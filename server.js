@@ -1078,14 +1078,23 @@ app.post('/cal/search-bookings-by-phone', async (req, res) => {
     }
     
     try {
-        const response = await fetch('https://api.cal.com/v2/bookings?limit=100', {
-            headers: {
-                'Authorization': `Bearer ${process.env.CAL_API_KEY}`,
-                'cal-api-version': '2024-08-13'
+        // Request only upcoming bookings, sorted by start time
+        const response = await fetch(
+            'https://api.cal.com/v2/bookings?status=upcoming&sortStart=asc&limit=100',
+            {
+                headers: {
+                    'Authorization': `Bearer ${process.env.CAL_API_KEY}`,
+                    'cal-api-version': '2024-08-13'
+                }
             }
-        });
+        );
         
         const bookings = await response.json();
+        
+        // ===== DEBUG: Log pagination info =====
+        console.log("📋 Pagination:", bookings.pagination);
+        console.log("📋 Returned bookings:", bookings.data?.length);
+        // ===== END DEBUG =====
         
         // ===== DEBUG: Log all bookings from Cal.com =====
         console.log('📋 All bookings from Cal.com:');
@@ -1105,9 +1114,8 @@ app.post('/cal/search-bookings-by-phone', async (req, res) => {
         console.log('🔍 Normalized search phone:', normalizedSearchPhone);
         console.log('🔍 Current time:', now.toISOString());
         
-        // Filter for active bookings only:
-        // - Status must be 'accepted' or 'pending' (not cancelled, completed, rejected)
-        // - Start time must be in the future
+        // Since we're using status=upcoming, we only need to filter by phone number
+        // but keep the date filter as a safety check
         const matchingBookings = bookings.data?.filter(b => {
             // Check if this booking belongs to this phone number
             const phoneMatches = b.attendees?.some(a => 
@@ -1116,18 +1124,13 @@ app.post('/cal/search-bookings-by-phone', async (req, res) => {
             
             if (!phoneMatches) return false;
             
-            // Check if the booking is active (not cancelled, completed, etc.)
-            const activeStatuses = ['accepted', 'pending'];
-            const isActive = activeStatuses.includes(b.status);
-            
-            // Check if the booking is in the future
+            // Safety check: ensure booking is still in the future
             const bookingDate = new Date(b.start);
             const isFuture = bookingDate > now;
             
-            console.log(`📊 Booking ${b.uid}: phoneMatch=${phoneMatches}, isActive=${isActive}, isFuture=${isFuture}, status=${b.status}`);
+            console.log(`📊 Booking ${b.uid}: phoneMatch=${phoneMatches}, isFuture=${isFuture}, status=${b.status}`);
             
-            // Only return bookings that are both active AND in the future
-            return isActive && isFuture;
+            return isFuture;
         });
         
         if (matchingBookings && matchingBookings.length > 0) {
