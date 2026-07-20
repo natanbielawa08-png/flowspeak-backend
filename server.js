@@ -1217,7 +1217,7 @@ app.post('/cal/reschedule-booking', async (req, res) => {
     
     console.log('📅 Rescheduling booking:', bookingUid);
     console.log('🕒 New time:', newStartTime);
-    if (customerPhone) console.log('📞 Customer phone for notification:', customerPhone);
+    if (customerPhone) console.log('📞 Customer phone provided:', customerPhone);
     
     let validTime = newStartTime;
     if (!newStartTime || newStartTime === '') {
@@ -1234,6 +1234,36 @@ app.post('/cal/reschedule-booking', async (req, res) => {
             }
         } catch (e) {
             console.log('⚠️ Could not parse time, using as-is');
+        }
+    }
+    
+    // Fetch the original booking to get customer details if not provided
+    let phoneToUse = customerPhone;
+    let nameToUse = customerName;
+    
+    if (!phoneToUse) {
+        try {
+            console.log('🔍 Fetching booking details for customer info...');
+            const getResponse = await fetch(`https://api.cal.com/v2/bookings/${bookingUid}`, {
+                headers: {
+                    'Authorization': `Bearer ${process.env.CAL_API_KEY}`,
+                    'cal-api-version': '2024-08-13'
+                }
+            });
+            
+            if (getResponse.ok) {
+                const bookingDetails = await getResponse.json();
+                const attendee = bookingDetails.data?.attendees?.[0];
+                if (attendee) {
+                    phoneToUse = attendee.phoneNumber || attendee.phone || null;
+                    nameToUse = attendee.name || null;
+                    console.log('✅ Found customer from booking:', { phone: phoneToUse, name: nameToUse });
+                }
+            } else {
+                console.log('⚠️ Could not fetch booking details, status:', getResponse.status);
+            }
+        } catch (fetchErr) {
+            console.log('⚠️ Could not fetch booking details:', fetchErr.message);
         }
     }
     
@@ -1255,8 +1285,8 @@ app.post('/cal/reschedule-booking', async (req, res) => {
         
         if (response.ok) {
             // Send customer confirmation SMS
-            if (customerPhone && customerPhone !== '?' && customerPhone.length > 8) {
-                const name = customerName || 'Customer';
+            if (phoneToUse && phoneToUse !== '?' && phoneToUse.length > 8) {
+                const name = nameToUse || 'Customer';
                 
                 // Format the new date/time
                 let formattedDateTime = validTime;
@@ -1280,13 +1310,15 @@ app.post('/cal/reschedule-booking', async (req, res) => {
                     await twilioClient.messages.create(getTwilioOptions({
                         body: message,
                         from: TWILIO_PHONE_NUMBER,
-                        to: customerPhone
+                        to: phoneToUse
                     }));
-                    console.log('✅ Customer reschedule SMS sent to:', customerPhone);
+                    console.log('✅ Customer reschedule SMS sent to:', phoneToUse);
                 } catch (smsErr) {
                     console.error('❌ Customer SMS error:', smsErr.message);
                     // Don't fail the reschedule if SMS fails
                 }
+            } else {
+                console.log('⚠️ No customer phone available for SMS notification');
             }
             
             res.json({ 
