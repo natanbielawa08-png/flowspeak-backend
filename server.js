@@ -1078,7 +1078,7 @@ app.post('/cal/search-bookings-by-phone', async (req, res) => {
     }
     
     try {
-        const response = await fetch('https://api.cal.com/v2/bookings?limit=50', {
+        const response = await fetch('https://api.cal.com/v2/bookings?limit=100', {
             headers: {
                 'Authorization': `Bearer ${process.env.CAL_API_KEY}`,
                 'cal-api-version': '2024-08-13'
@@ -1087,14 +1087,51 @@ app.post('/cal/search-bookings-by-phone', async (req, res) => {
         
         const bookings = await response.json();
         
-        const normalizedSearchPhone = normalizePhoneNumber(phone);
+        // ===== DEBUG: Log all bookings from Cal.com =====
+        console.log('📋 All bookings from Cal.com:');
+        bookings.data?.forEach(b => {
+            console.log({
+                uid: b.uid,
+                start: b.start,
+                status: b.status,
+                phone: b.attendees?.[0]?.phoneNumber
+            });
+        });
+        // ===== END DEBUG =====
         
-        const matchingBookings = bookings.data?.filter(b => 
-            b.attendees?.some(a => normalizePhoneNumber(a.phoneNumber) === normalizedSearchPhone)
-        );
+        const normalizedSearchPhone = normalizePhoneNumber(phone);
+        const now = new Date();
+        
+        console.log('🔍 Normalized search phone:', normalizedSearchPhone);
+        console.log('🔍 Current time:', now.toISOString());
+        
+        // Filter for active bookings only:
+        // - Status must be 'accepted' or 'pending' (not cancelled, completed, rejected)
+        // - Start time must be in the future
+        const matchingBookings = bookings.data?.filter(b => {
+            // Check if this booking belongs to this phone number
+            const phoneMatches = b.attendees?.some(a => 
+                normalizePhoneNumber(a.phoneNumber) === normalizedSearchPhone
+            );
+            
+            if (!phoneMatches) return false;
+            
+            // Check if the booking is active (not cancelled, completed, etc.)
+            const activeStatuses = ['accepted', 'pending'];
+            const isActive = activeStatuses.includes(b.status);
+            
+            // Check if the booking is in the future
+            const bookingDate = new Date(b.start);
+            const isFuture = bookingDate > now;
+            
+            console.log(`📊 Booking ${b.uid}: phoneMatch=${phoneMatches}, isActive=${isActive}, isFuture=${isFuture}, status=${b.status}`);
+            
+            // Only return bookings that are both active AND in the future
+            return isActive && isFuture;
+        });
         
         if (matchingBookings && matchingBookings.length > 0) {
-            console.log(`✅ Found ${matchingBookings.length} booking(s)`);
+            console.log(`✅ Found ${matchingBookings.length} active upcoming booking(s)`);
             res.json({ 
                 success: true, 
                 count: matchingBookings.length,
@@ -1106,8 +1143,8 @@ app.post('/cal/search-bookings-by-phone', async (req, res) => {
                 }))
             });
         } else {
-            console.log('❌ No bookings found');
-            res.json({ success: false, error: 'No bookings found for that phone number' });
+            console.log('❌ No active upcoming bookings found');
+            res.json({ success: false, error: 'No active upcoming bookings found for that phone number' });
         }
     } catch (error) {
         console.error('❌ Search error:', error.message);
