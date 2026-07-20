@@ -1492,13 +1492,25 @@ app.post('/cal/reschedule-booking', async (req, res) => {
 });
 
 app.post('/cal/book-appointment', async (req, res) => {
-    const { name, phone, time, postcode, street, houseNumber, source } = req.body;
+    const {
+        name,
+        phone,
+        time,
+        postcode,
+        street,
+        streetName,
+        houseNumber,
+        source
+    } = req.body;
+    
+    // Support both 'street' and 'streetName' field names
+    const finalStreet = street || streetName || '';
     
     console.log('📅 Booking appointment for:', name);
     console.log('📞 Phone:', phone);
     console.log('🕒 Time received:', time);
     console.log('📍 Postcode:', postcode);
-    console.log('🏠 Street:', street || '⚠️ MISSING');
+    console.log('🏠 Street:', finalStreet || '⚠️ MISSING');
     console.log('🔢 House/Flat Number:', houseNumber || '⚠️ MISSING');
     console.log('📱 Source:', source || 'phone_call (default)');
     
@@ -1536,9 +1548,9 @@ app.post('/cal/book-appointment', async (req, res) => {
                 eventTypeId: 6005228,
                 metadata: {
                     postcode: postcode || 'Not provided',
-                    street: street || '',
+                    street: finalStreet,
                     houseNumber: houseNumber || '',
-                    source: source || 'phone_call'  // Accept source parameter, default to phone_call
+                    source: source || 'phone_call'
                 },
                 attendee: {
                     name: name,
